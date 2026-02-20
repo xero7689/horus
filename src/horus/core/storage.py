@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from horus.models import ScrapedItem
+from horus.models import ScrapedItem, ScrapedPage
 
 _SCHEMA = """
 PRAGMA journal_mode=WAL;
@@ -57,7 +57,27 @@ CREATE TABLE IF NOT EXISTS crawl_log (
     started_at  TEXT NOT NULL,
     finished_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS pages (
+    url         TEXT PRIMARY KEY,
+    site_id     TEXT NOT NULL,
+    title       TEXT,
+    markdown    TEXT NOT NULL,
+    fetched_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_pages_site_id ON pages(site_id);
 """
+
+
+def _row_to_page(row: sqlite3.Row) -> ScrapedPage:
+    return ScrapedPage(
+        url=row["url"],
+        site_id=row["site_id"],
+        title=row["title"],
+        markdown=row["markdown"],
+        fetched_at=datetime.fromisoformat(row["fetched_at"]).replace(tzinfo=UTC),
+    )
 
 
 def _row_to_item(row: sqlite3.Row) -> ScrapedItem:
@@ -250,6 +270,48 @@ class HorusStorage:
             "by_site": by_site,
             "latest_by_site": latest_by_site,
         }
+
+    def upsert_page(self, page: ScrapedPage) -> bool:
+        """Insert or replace a page. Returns True if it was newly inserted."""
+        existing = self._conn.execute(
+            "SELECT 1 FROM pages WHERE url = ?", (page.url,)
+        ).fetchone()
+        self._conn.execute(
+            """INSERT OR REPLACE INTO pages (url, site_id, title, markdown, fetched_at)
+            VALUES (?, ?, ?, ?, ?)""",
+            (
+                page.url,
+                page.site_id,
+                page.title,
+                page.markdown,
+                page.fetched_at.isoformat(),
+            ),
+        )
+        self._conn.commit()
+        return existing is None
+
+    def get_pages(
+        self,
+        *,
+        site_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[ScrapedPage]:
+        query = "SELECT * FROM pages WHERE 1=1"
+        params: list[str | int] = []
+        if site_id:
+            query += " AND site_id = ?"
+            params.append(site_id)
+        query += " ORDER BY fetched_at DESC LIMIT ? OFFSET ?"
+        params.extend([limit, offset])
+        rows = self._conn.execute(query, params).fetchall()
+        return [_row_to_page(row) for row in rows]
+
+    def get_page(self, url: str) -> ScrapedPage | None:
+        row = self._conn.execute(
+            "SELECT * FROM pages WHERE url = ?", (url,)
+        ).fetchone()
+        return _row_to_page(row) if row else None
 
     def close(self) -> None:
         self._conn.close()

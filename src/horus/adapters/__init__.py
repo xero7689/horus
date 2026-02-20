@@ -1,5 +1,6 @@
 from horus.adapters.base import SiteAdapter
 from horus.adapters.threads import ThreadsAdapter
+from horus.adapters.web import GenericWebAdapter
 
 _REGISTRY: dict[str, type[SiteAdapter]] = {}
 
@@ -23,5 +24,6 @@ def list_adapters() -> list[type[SiteAdapter]]:
 
 # Register built-in adapters
 register(ThreadsAdapter)
+register(GenericWebAdapter)
 
 __all__ = ["SiteAdapter", "register", "get_adapter", "list_adapters"]

@@ -14,22 +14,24 @@
 
 ```
 src/horus/
-├── cli.py              # Click CLI（login, crawl, list-sites, show, search, export, stats）
+├── cli.py              # Click CLI（login, crawl, list-sites, show, search, pages, export, stats）
 ├── config.py           # Settings（HORUS_* env vars，~/.horus/ 路徑管理）
-├── models.py           # ScrapedItem, CrawlResult, SiteAdapterConfig
+├── models.py           # ScrapedItem, ScrapedPage, CrawlResult, SiteAdapterConfig
 ├── core/
 │   ├── browser.py      # BaseBrowser（Playwright 生命週期，save_login_state）
-│   ├── scraper.py      # BaseScraper（scrape：scroll + response intercept）
-│   └── storage.py      # HorusStorage（SQLite + FTS5）
+│   ├── scraper.py      # BaseScraper（scrape：scroll + response intercept；scrape_page：HTML → Markdown）
+│   └── storage.py      # HorusStorage（SQLite + FTS5；items + pages 兩張表）
 └── adapters/
-    ├── base.py         # SiteAdapter ABC（3 abstract methods）
+    ├── base.py         # SiteAdapter ABC（has_page_mode flag + 3 abstract methods）
     ├── __init__.py     # Registry（register, get_adapter, list_adapters）
-    └── threads.py      # Threads adapter
+    ├── threads.py      # Threads adapter（GraphQL 攔截）
+    └── web.py          # GenericWebAdapter（任意公開網頁 → Markdown，has_page_mode=True）
 tests/
 ├── conftest.py         # storage fixture（in-memory SQLite）
 ├── test_storage.py
 └── adapters/
-    └── test_threads_adapter.py
+    ├── test_threads_adapter.py
+    └── test_web_adapter.py
 ```
 
 ## 常用指令
@@ -39,11 +41,16 @@ horus login threads                              # 開 browser 手動登入，�
 horus crawl threads --user @username             # 爬取貼文（增量）
 horus crawl threads --user @username --mode replies  # 爬取回覆
 horus crawl threads --url https://...            # 爬特定 URL
+horus crawl web --url https://example.com        # 爬公開網頁，存 pages 表
+horus crawl web --url https://example.com --output ./pages/   # 同時輸出 .md 檔
+horus crawl web --url-list urls.txt --output ./pages/          # 批次爬取
 horus list-sites                                 # 列出可用 adapters
-horus show --site threads --limit 20             # 顯示已儲存資料
+horus show --site threads --limit 20             # 顯示已儲存 items
+horus pages --site web --limit 10                # 顯示已儲存 pages
 horus search "關鍵字" --site threads             # FTS 搜尋（支援中文）
 horus export --site threads --format json -o out.json
 horus export --site threads --format csv -o out.csv
+horus export --site web --format markdown --output ./export/  # 從 DB 匯出 .md 檔
 horus stats                                      # 統計資訊
 ```
 
@@ -70,6 +77,8 @@ horus stats                                      # 統計資訊
 - **FTS5 trigram**：支援中文搜尋，短查詢（<3字）自動 fallback LIKE
 - **WAL mode**：SQLite write-ahead logging
 - **增量爬取**：`crawl` 指令預設從上次最新 timestamp 開始（`get_latest_timestamp`）
+- **has_page_mode**：`SiteAdapter.has_page_mode = True` 時 CLI 走 `scrape_page()` 路徑（HTML → Markdown），存入 `pages` 表；`False` 走 response 攔截路徑存入 `items` 表
+- **markdownify**：HTML → Markdown 轉換，保留結構、去除 script/style/nav/footer
 
 ## 環境變數
 
@@ -99,3 +108,11 @@ uv run horus --help                    # 確認 CLI 可用
 - 自動偵測 posts/replies mode：thread_items 有 1 個 = posts，2+ 個 = replies
 - extra 欄位：`like_count`, `reply_count`, `repost_count`, `media_type`, `media_urls`,
   `is_reply`, `parent_post_id`, `conversation_id`, `reply_to_username`
+
+## GenericWebAdapter（web）說明
+
+- `has_page_mode = True`，不攔截 HTTP responses，改用 `scrape_page()` 抓完整 HTML
+- 支援 `--url URL`（單一頁面）或 `--url-list FILE`（文字檔，一行一個 URL，# 為註解）
+- 結果存 `pages` 表（以 URL 為 primary key，upsert）
+- `--output DIR` 同時將每頁寫成 `{slug}.md` 到指定目錄
+- `horus export --format markdown` 可事後從 DB 批次匯出 .md 檔

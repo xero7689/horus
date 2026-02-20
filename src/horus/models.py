@@ -1,7 +1,7 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ScrapedItem(BaseModel):
@@ -15,6 +15,16 @@ class ScrapedItem(BaseModel):
     author_name: str | None = None
     timestamp: datetime
     extra: dict[str, Any] = {}
+
+
+class ScrapedPage(BaseModel):
+    """A crawled web page stored as Markdown. Used by GenericWebAdapter."""
+
+    url: str
+    site_id: str
+    title: str | None = None
+    markdown: str
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
 
 class CrawlResult(BaseModel):

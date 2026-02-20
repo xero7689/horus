@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
 from horus.core.storage import HorusStorage
-from horus.models import ScrapedItem
+from horus.models import ScrapedItem, ScrapedPage
 
 
 def _item(
@@ -193,3 +193,69 @@ class TestGetStats:
         assert stats["total"] == 1
         assert "threads" in stats["by_site"]
         assert "instagram" not in stats["by_site"]
+
+
+def _page(
+    url: str = "https://example.com/page1",
+    site_id: str = "web",
+    title: str = "Example Page",
+    markdown: str = "# Hello\n\nWorld",
+) -> ScrapedPage:
+    return ScrapedPage(
+        url=url,
+        site_id=site_id,
+        title=title,
+        markdown=markdown,
+        fetched_at=datetime(2024, 1, 1, 10, 0, 0, tzinfo=UTC),
+    )
+
+
+class TestPages:
+    def test_upsert_page_new(self, storage: HorusStorage) -> None:
+        is_new = storage.upsert_page(_page())
+        assert is_new is True
+
+    def test_upsert_page_update(self, storage: HorusStorage) -> None:
+        storage.upsert_page(_page())
+        is_new = storage.upsert_page(_page(markdown="# Updated"))
+        assert is_new is False
+
+    def test_upsert_page_update_replaces_content(self, storage: HorusStorage) -> None:
+        storage.upsert_page(_page())
+        storage.upsert_page(_page(markdown="# Updated"))
+        result = storage.get_page("https://example.com/page1")
+        assert result is not None
+        assert result.markdown == "# Updated"
+
+    def test_get_page_by_url(self, storage: HorusStorage) -> None:
+        storage.upsert_page(_page())
+        result = storage.get_page("https://example.com/page1")
+        assert result is not None
+        assert result.title == "Example Page"
+        assert result.site_id == "web"
+
+    def test_get_page_not_found(self, storage: HorusStorage) -> None:
+        result = storage.get_page("https://nonexistent.com/")
+        assert result is None
+
+    def test_get_pages_all(self, storage: HorusStorage) -> None:
+        storage.upsert_page(_page("https://example.com/1"))
+        storage.upsert_page(_page("https://example.com/2"))
+        result = storage.get_pages()
+        assert len(result) == 2
+
+    def test_get_pages_filter_by_site(self, storage: HorusStorage) -> None:
+        storage.upsert_page(_page("https://example.com/1", site_id="web"))
+        storage.upsert_page(_page("https://example.com/2", site_id="other"))
+        result = storage.get_pages(site_id="web")
+        assert len(result) == 1
+        assert result[0].site_id == "web"
+
+    def test_get_pages_limit_offset(self, storage: HorusStorage) -> None:
+        for i in range(5):
+            storage.upsert_page(_page(f"https://example.com/{i}"))
+        page1 = storage.get_pages(limit=2, offset=0)
+        page2 = storage.get_pages(limit=2, offset=2)
+        assert len(page1) == 2
+        assert len(page2) == 2
+        assert {p.url for p in page1}.isdisjoint({p.url for p in page2})

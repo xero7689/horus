@@ -5,10 +5,19 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from markdownify import markdownify
 from playwright.async_api import Page, Response
 
 from horus.core.browser import BaseBrowser
-from horus.models import ScrapedItem
+from horus.models import ScrapedItem, ScrapedPage
+
+
+def _html_to_markdown(html: str) -> str:
+    return markdownify(
+        html,
+        heading_style="ATX",
+        strip=["script", "style", "nav", "footer"],
+    )
 
 
 class BaseScraper(BaseBrowser):
@@ -146,6 +155,31 @@ class BaseScraper(BaseBrowser):
         # Sort descending by timestamp
         unique_items.sort(key=lambda item: item.timestamp, reverse=True)
         return unique_items
+
+    async def scrape_page(
+        self,
+        url: str,
+        state_path: Path | None = None,
+        *,
+        site_id: str = "web",
+        wait_for: str | None = None,
+    ) -> ScrapedPage:
+        """Navigate to URL, extract full rendered HTML, convert to Markdown."""
+        assert self._browser is not None, "Use as async context manager"
+
+        context = await self.new_context(state_path=state_path)
+        page = await context.new_page()
+        try:
+            await page.goto(url, wait_until="networkidle", timeout=60000)
+            if wait_for:
+                await page.wait_for_selector(wait_for, timeout=10000)
+            title = await page.title()
+            html = await page.content()
+        finally:
+            await context.close()
+
+        markdown = _html_to_markdown(html)
+        return ScrapedPage(url=url, site_id=site_id, title=title, markdown=markdown)
 
     async def _scroll_page(self, page: Page) -> None:
         """Scroll to bottom with random delay."""

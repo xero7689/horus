@@ -19,6 +19,7 @@ class SiteAdapter(ABC):
     login_url: ClassVar[str]
     requires_login: ClassVar[bool]
     description: ClassVar[str] = ""
+    has_page_mode: ClassVar[bool] = False  # True = use scrape_page() instead of scrape()
 
     @abstractmethod
     def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
