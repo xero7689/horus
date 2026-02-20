@@ -185,33 +185,36 @@ async def _crawl(
     def on_progress(scroll: int, total: int) -> None:
         console.print(f"  [dim]scroll #{scroll} — {total} items so far[/dim]")
 
-    async with BaseScraper(**scraper_kwargs) as scraper:
-        for url in urls:
-            console.print(f"Crawling [cyan]{url}[/cyan]...")
-            with console.status("Fetching..."):
-                items = await scraper.scrape(
+    def on_batch(batch: list[ScrapedItem]) -> None:
+        """Write each batch to DB immediately so Ctrl+C doesn't lose data."""
+        nonlocal total_found, total_new
+        batch = adapter.post_process(batch)
+        new_count = storage.upsert_items(batch)
+        total_found += len(batch)
+        total_new += new_count
+
+    interrupted = False
+    try:
+        async with BaseScraper(**scraper_kwargs) as scraper:
+            for url in urls:
+                console.print(f"Crawling [cyan]{url}[/cyan]...")
+                await scraper.scrape(
                     url,
                     adapter.get_response_filter(),
                     adapter.parse_response,
                     state_path,
                     since=since,
                     on_progress=on_progress,
+                    on_batch=on_batch,
                 )
+                storage.log_crawl(site, url, total_found, total_new, started_at)
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        interrupted = True
 
-            items = adapter.post_process(items)
-            total_found += len(items)
-
-            if items:
-                new_count = storage.upsert_items(items)
-                total_new += new_count
-                console.print(f"  {len(items)} items fetched, [green]{new_count} new[/green]")
-                storage.log_crawl(site, url, len(items), new_count, started_at)
-            else:
-                console.print("  No new items found")
-
-    console.print(
-        f"\n[bold]Done.[/bold] {total_found} items found, {total_new} new saved."
-    )
+    if interrupted:
+        console.print(f"\n[yellow]Interrupted.[/yellow] {total_found} items found, {total_new} saved.")  # noqa: E501
+    else:
+        console.print(f"\n[bold]Done.[/bold] {total_found} items found, {total_new} new saved.")
     storage.close()
 
 
