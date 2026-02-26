@@ -294,6 +294,7 @@ class HorusStorage:
         self,
         *,
         site_id: str | None = None,
+        url: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[ScrapedPage]:
@@ -302,6 +303,9 @@ class HorusStorage:
         if site_id:
             query += " AND site_id = ?"
             params.append(site_id)
+        if url:
+            query += " AND url = ?"
+            params.append(url)
         query += " ORDER BY fetched_at DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
         rows = self._conn.execute(query, params).fetchall()

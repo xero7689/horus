@@ -5,19 +5,23 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from bs4 import BeautifulSoup
 from markdownify import markdownify
 from playwright.async_api import Page, Response
 
 from horus.core.browser import BaseBrowser
 from horus.models import ScrapedItem, ScrapedPage
 
+_STRIP_TAGS = ["script", "style", "nav", "footer", "header", "aside", "noscript"]
+
 
 def _html_to_markdown(html: str) -> str:
-    return markdownify(
-        html,
-        heading_style="ATX",
-        strip=["script", "style", "nav", "footer"],
-    )
+    soup = BeautifulSoup(html, "html.parser")
+    for tag in soup.find_all(_STRIP_TAGS):
+        tag.decompose()
+    # Extract main content if available, otherwise fall back to body
+    main = soup.find("main") or soup.find("article") or soup.find("body") or soup
+    return markdownify(str(main), heading_style="ATX")
 
 
 class BaseScraper(BaseBrowser):

@@ -354,10 +354,11 @@ def pages(site: str | None, limit: int) -> None:
 @main.command()
 @click.option("--site", default=None, help="Filter by site ID")
 @click.option("--author", "-a", default=None, help="Filter by author")
+@click.option("--url", default=None, help="Filter by exact URL (for page-mode exports)")
 @click.option("--format", "fmt", type=click.Choice(["json", "csv", "markdown"]), default="json")
 @click.option("--output", "-o", required=True, help="Output file path (or directory for markdown)")
 @click.option("--limit", "-n", default=10000, type=int, help="Max items to export")
-def export(site: str | None, author: str | None, fmt: str, output: str, limit: int) -> None:
+def export(site: str | None, author: str | None, url: str | None, fmt: str, output: str, limit: int) -> None:  # noqa: E501
     """Export stored items to JSON, CSV, or Markdown.
 
     For --format markdown, --output should be a directory.
@@ -367,7 +368,7 @@ def export(site: str | None, author: str | None, fmt: str, output: str, limit: i
     output_path = Path(output)
 
     if fmt == "markdown":
-        page_list = storage.get_pages(site_id=site, limit=limit)
+        page_list = storage.get_pages(site_id=site, url=url, limit=limit)
         storage.close()
         output_path.mkdir(parents=True, exist_ok=True)
         for pg in page_list:
