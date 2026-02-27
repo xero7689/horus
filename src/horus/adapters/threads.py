@@ -106,10 +106,7 @@ class ThreadsAdapter(SiteAdapter):
 
     def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
         def filter_fn(url: str, body: dict[str, Any]) -> bool:
-            return (
-                "graphql" in url
-                and "mediaData" in str(body.get("data", {}).keys())
-            )
+            return "graphql" in url and "mediaData" in str(body.get("data", {}).keys())
 
         return filter_fn
 

@@ -112,12 +112,23 @@ async def _login(site: str, output_override: str | None) -> None:
 
 @main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
 @click.argument("site")
-@click.option("--since", "-s", default=None, help="Only fetch items newer than this date (YYYY-MM-DD)")  # noqa: E501
+@click.option(
+    "--since", "-s", default=None, help="Only fetch items newer than this date (YYYY-MM-DD)"
+)  # noqa: E501
 @click.option("--limit", "-n", default=50, type=int, help="Max items to fetch (0 = unlimited)")
 @click.option("--no-state", is_flag=True, help="Ignore saved login state")
-@click.option("--output", "-o", default=None, help="Output directory for .md files (page-mode adapters only)")  # noqa: E501
+@click.option(
+    "--output", "-o", default=None, help="Output directory for .md files (page-mode adapters only)"
+)  # noqa: E501
 @click.argument("extra_args", nargs=-1, type=click.UNPROCESSED)
-def crawl(site: str, since: str | None, limit: int, no_state: bool, output: str | None, extra_args: tuple[str, ...]) -> None:  # noqa: E501
+def crawl(
+    site: str,
+    since: str | None,
+    limit: int,
+    no_state: bool,
+    output: str | None,
+    extra_args: tuple[str, ...],
+) -> None:  # noqa: E501
     """Crawl a site using its adapter.
 
     Pass adapter-specific options after the site name:
@@ -185,47 +196,63 @@ async def _crawl(
 
     interrupted = False
     try:
-        async with BaseScraper(**scraper_kwargs) as scraper:
-            if adapter_cls.has_page_mode:
-                # Page-based path: HTML → Markdown
-                for url in urls:
-                    console.print(f"Fetching [cyan]{url}[/cyan]...")
-                    page = await scraper.scrape_page(url, state_path, site_id=site)
-                    is_new = storage.upsert_page(page)
-                    total_found += 1
-                    total_new += int(is_new)
-                    if output_dir:
-                        _write_page_md(page, output_dir)
-                        console.print(f"  [dim]→ saved markdown to {output_dir}[/dim]")
-                storage.log_crawl(site, urls[0] if len(urls) == 1 else f"{len(urls)} URLs", total_found, total_new, started_at)  # noqa: E501
-            else:
-                # Response-intercept path (Threads etc.)
-                since = _parse_since(since_str)
-                if since is None:
-                    since = storage.get_latest_timestamp(site)
+        if adapter_cls.has_http_mode:
+            # Direct HTTP path (no Playwright): DDG etc.
+            console.print(f"Searching [cyan]{site}[/cyan]...")
+            items = await adapter.fetch_items(**kwargs)
+            items = adapter.post_process(items)
+            new_count = storage.upsert_items(items)
+            total_found = len(items)
+            total_new = new_count
+            storage.log_crawl(site, str(kwargs), total_found, total_new, started_at)
+        else:
+            async with BaseScraper(**scraper_kwargs) as scraper:
+                if adapter_cls.has_page_mode:
+                    # Page-based path: HTML → Markdown
+                    for url in urls:
+                        console.print(f"Fetching [cyan]{url}[/cyan]...")
+                        page = await scraper.scrape_page(url, state_path, site_id=site)
+                        is_new = storage.upsert_page(page)
+                        total_found += 1
+                        total_new += int(is_new)
+                        if output_dir:
+                            _write_page_md(page, output_dir)
+                            console.print(f"  [dim]→ saved markdown to {output_dir}[/dim]")
+                    storage.log_crawl(
+                        site,
+                        urls[0] if len(urls) == 1 else f"{len(urls)} URLs",
+                        total_found,
+                        total_new,
+                        started_at,
+                    )  # noqa: E501
+                else:
+                    # Response-intercept path (Threads etc.)
+                    since = _parse_since(since_str)
+                    if since is None:
+                        since = storage.get_latest_timestamp(site)
 
-                def on_progress(scroll: int, total: int) -> None:
-                    console.print(f"  [dim]scroll #{scroll} — {total} items so far[/dim]")
+                    def on_progress(scroll: int, total: int) -> None:
+                        console.print(f"  [dim]scroll #{scroll} — {total} items so far[/dim]")
 
-                def on_batch(batch: list[ScrapedItem]) -> None:
-                    nonlocal total_found, total_new
-                    batch = adapter.post_process(batch)
-                    new_count = storage.upsert_items(batch)
-                    total_found += len(batch)
-                    total_new += new_count
+                    def on_batch(batch: list[ScrapedItem]) -> None:
+                        nonlocal total_found, total_new
+                        batch = adapter.post_process(batch)
+                        new_count = storage.upsert_items(batch)
+                        total_found += len(batch)
+                        total_new += new_count
 
-                for url in urls:
-                    console.print(f"Crawling [cyan]{url}[/cyan]...")
-                    await scraper.scrape(
-                        url,
-                        adapter.get_response_filter(),
-                        adapter.parse_response,
-                        state_path,
-                        since=since,
-                        on_progress=on_progress,
-                        on_batch=on_batch,
-                    )
-                    storage.log_crawl(site, url, total_found, total_new, started_at)
+                    for url in urls:
+                        console.print(f"Crawling [cyan]{url}[/cyan]...")
+                        await scraper.scrape(
+                            url,
+                            adapter.get_response_filter(),
+                            adapter.parse_response,
+                            state_path,
+                            since=since,
+                            on_progress=on_progress,
+                            on_batch=on_batch,
+                        )
+                        storage.log_crawl(site, url, total_found, total_new, started_at)
     except (KeyboardInterrupt, asyncio.CancelledError):
         interrupted = True
 
@@ -239,6 +266,7 @@ async def _crawl(
 def _write_page_md(page: ScrapedPage, output_dir: Path) -> None:
     """Write a ScrapedPage as a .md file, named by slugified URL."""
     import re
+
     slug = re.sub(r"[^\w\-]", "_", page.url.split("://", 1)[-1])
     slug = re.sub(r"_+", "_", slug).strip("_")[:200]
     filename = f"{slug}.md"
@@ -358,7 +386,9 @@ def pages(site: str | None, limit: int) -> None:
 @click.option("--format", "fmt", type=click.Choice(["json", "csv", "markdown"]), default="json")
 @click.option("--output", "-o", required=True, help="Output file path (or directory for markdown)")
 @click.option("--limit", "-n", default=10000, type=int, help="Max items to export")
-def export(site: str | None, author: str | None, url: str | None, fmt: str, output: str, limit: int) -> None:  # noqa: E501
+def export(
+    site: str | None, author: str | None, url: str | None, fmt: str, output: str, limit: int
+) -> None:  # noqa: E501
     """Export stored items to JSON, CSV, or Markdown.
 
     For --format markdown, --output should be a directory.

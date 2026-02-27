@@ -12,6 +12,11 @@ class SiteAdapter(ABC):
     1. Create src/horus/adapters/mysite.py, subclass SiteAdapter
     2. Implement the 3 abstract methods
     3. In adapters/__init__.py, import and call register(MySiteAdapter)
+
+    Mode flags (mutually exclusive):
+    - has_page_mode=True : use scrape_page() → stores to pages table
+    - has_http_mode=True  : use fetch_items() → direct HTTP, no Playwright
+    - both False          : use scrape() response intercept → stores to items table
     """
 
     site_id: ClassVar[str]
@@ -20,6 +25,7 @@ class SiteAdapter(ABC):
     requires_login: ClassVar[bool]
     description: ClassVar[str] = ""
     has_page_mode: ClassVar[bool] = False  # True = use scrape_page() instead of scrape()
+    has_http_mode: ClassVar[bool] = False  # True = use fetch_items(), no Playwright needed
 
     @abstractmethod
     def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
@@ -42,6 +48,10 @@ class SiteAdapter(ABC):
         Each dict: {"name": "--user", "help": "...", "required": False, "default": None}
         """
         return []
+
+    async def fetch_items(self, **kwargs: Any) -> list[ScrapedItem]:
+        """Fetch items via direct HTTP (no Playwright). Override when has_http_mode=True."""
+        raise NotImplementedError(f"{self.__class__.__name__} does not implement fetch_items()")
 
     def post_process(self, items: list[ScrapedItem]) -> list[ScrapedItem]:
         """Optional post-processing hook after crawl."""

@@ -273,9 +273,7 @@ class HorusStorage:
 
     def upsert_page(self, page: ScrapedPage) -> bool:
         """Insert or replace a page. Returns True if it was newly inserted."""
-        existing = self._conn.execute(
-            "SELECT 1 FROM pages WHERE url = ?", (page.url,)
-        ).fetchone()
+        existing = self._conn.execute("SELECT 1 FROM pages WHERE url = ?", (page.url,)).fetchone()
         self._conn.execute(
             """INSERT OR REPLACE INTO pages (url, site_id, title, markdown, fetched_at)
             VALUES (?, ?, ?, ?, ?)""",
@@ -312,9 +310,7 @@ class HorusStorage:
         return [_row_to_page(row) for row in rows]
 
     def get_page(self, url: str) -> ScrapedPage | None:
-        row = self._conn.execute(
-            "SELECT * FROM pages WHERE url = ?", (url,)
-        ).fetchone()
+        row = self._conn.execute("SELECT * FROM pages WHERE url = ?", (url,)).fetchone()
         return _row_to_page(row) if row else None
 
     def close(self) -> None:

@@ -35,7 +35,9 @@ class TestGenericWebAdapter:
         with pytest.raises(ValueError, match="requires --url or --url-list"):
             adapter.get_urls()
 
-    def test_get_urls_from_file(self, adapter: GenericWebAdapter, tmp_path: pytest.TempPathFactory) -> None:  # noqa: E501
+    def test_get_urls_from_file(
+        self, adapter: GenericWebAdapter, tmp_path: pytest.TempPathFactory
+    ) -> None:  # noqa: E501
         url_file = tmp_path / "urls.txt"  # type: ignore[operator]
         url_file.write_text("https://example.com\nhttps://other.com\n# comment\n")
         urls = adapter.get_urls(url_list=str(url_file))
@@ -45,7 +47,9 @@ class TestGenericWebAdapter:
         with pytest.raises(ValueError, match="not found"):
             adapter.get_urls(url_list="/nonexistent/file.txt")
 
-    def test_get_urls_empty_file(self, adapter: GenericWebAdapter, tmp_path: pytest.TempPathFactory) -> None:  # noqa: E501
+    def test_get_urls_empty_file(
+        self, adapter: GenericWebAdapter, tmp_path: pytest.TempPathFactory
+    ) -> None:  # noqa: E501
         url_file = tmp_path / "urls.txt"  # type: ignore[operator]
         url_file.write_text("# only comments\n")
         with pytest.raises(ValueError, match="No URLs found"):

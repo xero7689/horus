@@ -41,37 +41,45 @@ class TestUpsertItems:
         assert items[0].text == "new"
 
     def test_cross_site_no_conflict(self, storage: HorusStorage) -> None:
-        count = storage.upsert_items([
-            _item("1", site_id="threads"),
-            _item("1", site_id="instagram"),
-        ])
+        count = storage.upsert_items(
+            [
+                _item("1", site_id="threads"),
+                _item("1", site_id="instagram"),
+            ]
+        )
         assert count == 2
 
 
 class TestGetItems:
     def test_filter_by_site(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", site_id="threads"),
-            _item("2", site_id="instagram"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", site_id="threads"),
+                _item("2", site_id="instagram"),
+            ]
+        )
         results = storage.get_items(site_id="threads")
         assert len(results) == 1
         assert results[0].site_id == "threads"
 
     def test_filter_by_author(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", author_name="alice"),
-            _item("2", author_name="bob"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", author_name="alice"),
+                _item("2", author_name="bob"),
+            ]
+        )
         results = storage.get_items(author_name="alice")
         assert len(results) == 1
         assert results[0].author_name == "alice"
 
     def test_filter_by_since(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", ts="2024-01-01T00:00:00+00:00"),
-            _item("2", ts="2024-06-01T00:00:00+00:00"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", ts="2024-01-01T00:00:00+00:00"),
+                _item("2", ts="2024-06-01T00:00:00+00:00"),
+            ]
+        )
         since = datetime(2024, 3, 1, tzinfo=UTC)
         results = storage.get_items(since=since)
         assert len(results) == 1
@@ -83,10 +91,12 @@ class TestGetItems:
         assert len(results) == 3
 
     def test_sorted_descending(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", ts="2024-01-01T00:00:00+00:00"),
-            _item("2", ts="2024-06-01T00:00:00+00:00"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", ts="2024-01-01T00:00:00+00:00"),
+                _item("2", ts="2024-06-01T00:00:00+00:00"),
+            ]
+        )
         results = storage.get_items()
         assert results[0].id == "2"  # newer first
 
@@ -96,20 +106,24 @@ class TestGetLatestTimestamp:
         assert storage.get_latest_timestamp("threads") is None
 
     def test_returns_max_timestamp(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", ts="2024-01-01T00:00:00+00:00"),
-            _item("2", ts="2024-06-01T00:00:00+00:00"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", ts="2024-01-01T00:00:00+00:00"),
+                _item("2", ts="2024-06-01T00:00:00+00:00"),
+            ]
+        )
         ts = storage.get_latest_timestamp("threads")
         assert ts is not None
         assert ts.year == 2024
         assert ts.month == 6
 
     def test_filter_by_author(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", author_name="alice", ts="2024-01-01T00:00:00+00:00"),
-            _item("2", author_name="bob", ts="2024-06-01T00:00:00+00:00"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", author_name="alice", ts="2024-01-01T00:00:00+00:00"),
+                _item("2", author_name="bob", ts="2024-06-01T00:00:00+00:00"),
+            ]
+        )
         ts = storage.get_latest_timestamp("threads", author_name="alice")
         assert ts is not None
         assert ts.month == 1
@@ -117,36 +131,44 @@ class TestGetLatestTimestamp:
 
 class TestSearch:
     def test_fts_basic(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", text="playwright automation"),
-            _item("2", text="something else"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", text="playwright automation"),
+                _item("2", text="something else"),
+            ]
+        )
         results = storage.search("playwright")
         assert len(results) == 1
         assert results[0].id == "1"
 
     def test_fts_chinese_trigram(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", text="違憲審查的討論"),
-            _item("2", text="完全無關的內容"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", text="違憲審查的討論"),
+                _item("2", text="完全無關的內容"),
+            ]
+        )
         results = storage.search("違憲審")
         assert len(results) == 1
         assert results[0].id == "1"
 
     def test_short_query_fallback_like(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", text="hi there"),
-            _item("2", text="bye now"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", text="hi there"),
+                _item("2", text="bye now"),
+            ]
+        )
         results = storage.search("hi")
         assert len(results) == 1
 
     def test_filter_by_site(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", site_id="threads", text="playwright test"),
-            _item("2", site_id="instagram", text="playwright test"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", site_id="threads", text="playwright test"),
+                _item("2", site_id="instagram", text="playwright test"),
+            ]
+        )
         results = storage.search("playwright", site_id="threads")
         assert len(results) == 1
         assert results[0].site_id == "threads"
@@ -175,20 +197,24 @@ class TestGetStats:
         assert stats["total"] == 2
 
     def test_by_site(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", site_id="threads"),
-            _item("2", site_id="threads"),
-            _item("3", site_id="instagram"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", site_id="threads"),
+                _item("2", site_id="threads"),
+                _item("3", site_id="instagram"),
+            ]
+        )
         stats = storage.get_stats()
         assert stats["by_site"]["threads"] == 2
         assert stats["by_site"]["instagram"] == 1
 
     def test_filter_by_site(self, storage: HorusStorage) -> None:
-        storage.upsert_items([
-            _item("1", site_id="threads"),
-            _item("2", site_id="instagram"),
-        ])
+        storage.upsert_items(
+            [
+                _item("1", site_id="threads"),
+                _item("2", site_id="instagram"),
+            ]
+        )
         stats = storage.get_stats(site_id="threads")
         assert stats["total"] == 1
         assert "threads" in stats["by_site"]
