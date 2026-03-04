@@ -1,3 +1,4 @@
+import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -192,6 +193,15 @@ class ThreadsAdapter(SiteAdapter):
             if mode == "replies":
                 return [f"https://www.threads.net/@{username}/replies"]
             return [f"https://www.threads.net/@{username}"]
+        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
+            try:
+                usernames = [line.strip().lstrip("@") for line in sys.stdin if line.strip()]
+            except OSError:
+                usernames = []
+            if usernames:
+                if mode == "replies":
+                    return [f"https://www.threads.net/@{u}/replies" for u in usernames]
+                return [f"https://www.threads.net/@{u}" for u in usernames]
         raise ValueError("threads adapter requires --user or --url")
 
     def get_crawl_options(self) -> list[dict[str, Any]]:

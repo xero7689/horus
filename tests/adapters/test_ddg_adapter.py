@@ -116,10 +116,11 @@ class TestGetUrls:
         assert len(urls) == 1
         assert "html.duckduckgo.com" in urls[0]
 
-    def test_no_query_raises(self) -> None:
+    def test_no_query_raises_in_fetch(self) -> None:
+        """Query validation happens in _read_queries(), not get_urls()."""
         adapter = DuckDuckGoAdapter()
         with pytest.raises(ValueError, match="--query"):
-            adapter.get_urls()
+            adapter._read_queries()
 
     def test_crawl_options_has_query(self) -> None:
         adapter = DuckDuckGoAdapter()

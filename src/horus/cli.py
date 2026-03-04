@@ -17,7 +17,7 @@ from horus.core.scraper import BaseScraper
 from horus.core.storage import HorusStorage
 from horus.models import ScrapedItem, ScrapedPage
 
-console = Console()
+console = Console(stderr=True)
 
 
 def _get_settings() -> Settings:
@@ -120,6 +120,7 @@ async def _login(site: str, output_override: str | None) -> None:
 @click.option(
     "--output", "-o", default=None, help="Output directory for .md files (page-mode adapters only)"
 )  # noqa: E501
+@click.option("--stdout", is_flag=True, help="Print results as JSONL to stdout")
 @click.argument("extra_args", nargs=-1, type=click.UNPROCESSED)
 def crawl(
     site: str,
@@ -127,6 +128,7 @@ def crawl(
     limit: int,
     no_state: bool,
     output: str | None,
+    stdout: bool,
     extra_args: tuple[str, ...],
 ) -> None:  # noqa: E501
     """Crawl a site using its adapter.
@@ -137,8 +139,10 @@ def crawl(
     horus crawl threads --user @someone
     horus crawl threads --user @someone --mode replies
     horus crawl web --url https://example.com --output ./pages/
+    horus crawl ddg --query "python" --stdout | jq '.url'
+    echo "https://example.com" | horus crawl web --stdout
     """
-    asyncio.run(_crawl(site, since, limit, no_state, output, extra_args))
+    asyncio.run(_crawl(site, since, limit, no_state, output, stdout, extra_args))
 
 
 async def _crawl(
@@ -147,6 +151,7 @@ async def _crawl(
     limit: int,
     no_state: bool,
     output: str | None,
+    emit_stdout: bool,
     extra_args: tuple[str, ...],
 ) -> None:
     settings = _get_settings()
@@ -194,6 +199,11 @@ async def _crawl(
         "max_pages": settings.max_pages,
     }
 
+    def _emit(item: ScrapedItem | ScrapedPage) -> None:
+        """Write one JSONL line to stdout if --stdout is set."""
+        if emit_stdout:
+            click.echo(item.model_dump_json())
+
     interrupted = False
     try:
         if adapter_cls.has_http_mode:
@@ -205,6 +215,8 @@ async def _crawl(
             total_found = len(items)
             total_new = new_count
             storage.log_crawl(site, str(kwargs), total_found, total_new, started_at)
+            for item in items:
+                _emit(item)
         else:
             async with BaseScraper(**scraper_kwargs) as scraper:
                 if adapter_cls.has_page_mode:
@@ -218,6 +230,7 @@ async def _crawl(
                         if output_dir:
                             _write_page_md(page, output_dir)
                             console.print(f"  [dim]→ saved markdown to {output_dir}[/dim]")
+                        _emit(page)
                     storage.log_crawl(
                         site,
                         urls[0] if len(urls) == 1 else f"{len(urls)} URLs",
@@ -240,6 +253,8 @@ async def _crawl(
                         new_count = storage.upsert_items(batch)
                         total_found += len(batch)
                         total_new += new_count
+                        for item in batch:
+                            _emit(item)
 
                     for url in urls:
                         console.print(f"Crawling [cyan]{url}[/cyan]...")

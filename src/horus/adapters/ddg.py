@@ -9,6 +9,7 @@ Usage:
 """
 
 import hashlib
+import sys
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -64,10 +65,22 @@ class DuckDuckGoAdapter(SiteAdapter):
         return []
 
     def get_urls(self, **kwargs: Any) -> list[str]:
-        query: str | None = kwargs.get("query")
-        if not query:
-            raise ValueError("ddg adapter requires --query")
+        # get_urls is unused in http mode; queries resolved in fetch_items
         return [_DDG_HTML_URL]
+
+    def _read_queries(self, **kwargs: Any) -> list[str]:
+        """Resolve queries from --query kwarg or stdin."""
+        query: str | None = kwargs.get("query")
+        if query:
+            return [query]
+        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
+            try:
+                lines = [line.strip() for line in sys.stdin if line.strip()]
+            except OSError:
+                lines = []
+            if lines:
+                return lines
+        raise ValueError("ddg adapter requires --query")
 
     def get_crawl_options(self) -> list[dict[str, Any]]:
         return [
@@ -82,13 +95,13 @@ class DuckDuckGoAdapter(SiteAdapter):
     # --- HTTP mode ---
 
     async def fetch_items(self, **kwargs: Any) -> list[ScrapedItem]:
-        """POST search query to DDG HTML endpoint, parse results."""
-        query: str | None = kwargs.get("query")
-        if not query:
-            raise ValueError("ddg adapter requires --query")
-
-        html = self._fetch_html(query)
-        return self.parse_html(html, query=query)
+        """POST search queries to DDG HTML endpoint, parse results."""
+        queries = self._read_queries(**kwargs)
+        items: list[ScrapedItem] = []
+        for query in queries:
+            html = self._fetch_html(query)
+            items.extend(self.parse_html(html, query=query))
+        return items
 
     def _fetch_html(self, query: str) -> str:
         data = urllib.parse.urlencode({"q": query, "b": "", "kl": ""}).encode()
