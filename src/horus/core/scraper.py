@@ -174,7 +174,12 @@ class BaseScraper(BaseBrowser):
         context = await self.new_context(state_path=state_path)
         page = await context.new_page()
         try:
-            await page.goto(url, wait_until="networkidle", timeout=60000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            # Wait for network to settle (handles JS-heavy sites like Substack)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass  # timeout is okay — grab whatever rendered
             if wait_for:
                 await page.wait_for_selector(wait_for, timeout=10000)
             title = await page.title()
