@@ -1,0 +1,25 @@
+{% if jobs %}
+  {% for job in jobs %}
+  <div class="job-item">
+    <span class="job-status {{ job.status }}">{{ job.status }}</span>
+    <div style="flex:1;min-width:0;">
+      <div style="font-size:.85rem;font-weight:600;">{{ job.site }} <span style="color:#555;font-weight:400;">{{ job.job_id }}</span></div>
+      <div style="font-size:.75rem;color:#666;">
+        {{ job.items_found }} found / {{ job.items_new }} new
+        · {{ job.started_at[:19] }}
+      </div>
+      {% if job.error %}
+      <div style="font-size:.75rem;color:#f87171;">{{ job.error[:80] }}</div>
+      {% endif %}
+    </div>
+    {% if job.status == 'running' %}
+    <button class="btn btn-danger btn-sm"
+            hx-delete="/crawl/{{ job.job_id }}"
+            hx-target="#job-list"
+            hx-confirm="Cancel this job?">Cancel</button>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <p style="color:#666;font-size:.85rem;">No jobs yet.</p>
+{% endif %}

@@ -94,11 +94,11 @@ def _row_to_item(row: sqlite3.Row) -> ScrapedItem:
 
 
 class HorusStorage:
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, check_same_thread: bool = True) -> None:
         db_str = str(db_path)
         if db_str != ":memory:":
             db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(db_str, check_same_thread=True)
+        self._conn = sqlite3.connect(db_str, check_same_thread=check_same_thread)
         self._conn.row_factory = sqlite3.Row
         self._migrate()
 

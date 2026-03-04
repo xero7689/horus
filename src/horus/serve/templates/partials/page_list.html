@@ -1,0 +1,17 @@
+{% if pages %}
+  {% for page in pages %}
+  <div class="card">
+    <div class="card-title">{{ page.title or '(no title)' }}</div>
+    <div class="card-url">
+      <a href="{{ page.url }}" target="_blank" rel="noopener">{{ page.url }}</a>
+    </div>
+    <div class="card-meta">
+      <span class="tag">{{ page.site_id }}</span>
+      {{ page.fetched_at.strftime('%Y-%m-%d %H:%M') }}
+    </div>
+    <div class="card-snippet">{{ page.markdown[:200].replace('\n', ' ') }}…</div>
+  </div>
+  {% endfor %}
+{% else %}
+  <p style="color:#666;margin-top:1rem;">No pages found.</p>
+{% endif %}

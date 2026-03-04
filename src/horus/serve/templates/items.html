@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Items — Horus{% endblock %}
+{% block content %}
+<h1>Items</h1>
+
+<form class="filters"
+      hx-get="/items"
+      hx-target="#item-list"
+      hx-trigger="submit, change"
+      hx-indicator="#loading">
+  <input type="search" name="q" value="{{ q or '' }}" placeholder="Search..."
+         hx-get="/items" hx-target="#item-list" hx-trigger="keyup changed delay:400ms" hx-indicator="#loading">
+  <select name="site">
+    <option value="">All sites</option>
+    {% for site_id in site_ids %}
+    <option value="{{ site_id }}" {% if site == site_id %}selected{% endif %}>{{ site_id }}</option>
+    {% endfor %}
+  </select>
+  <input type="date" name="since" value="{{ since or '' }}" title="Since date">
+  <input type="number" name="limit" value="{{ limit }}" min="10" max="500" style="width:80px" title="Limit">
+  <button class="btn" type="submit">Filter</button>
+  <span id="loading" class="htmx-indicator" style="color:#7eb8f7;font-size:.85rem;">Loading…</span>
+</form>
+
+<div id="item-list">
+  {% include "partials/item_list.html" %}
+</div>
+{% endblock %}

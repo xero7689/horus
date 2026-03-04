@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Horus{% endblock %}</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
+  <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f0f0f; color: #e0e0e0; min-height: 100vh; }
+    a { color: #7eb8f7; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Nav */
+    nav { background: #1a1a1a; border-bottom: 1px solid #333; padding: 0 1.5rem; display: flex; align-items: center; gap: 2rem; height: 52px; }
+    nav .logo { font-weight: 700; font-size: 1.1rem; color: #fff; letter-spacing: .05em; }
+    nav a { color: #aaa; font-size: .9rem; padding: .25rem 0; border-bottom: 2px solid transparent; }
+    nav a:hover, nav a.active { color: #fff; text-decoration: none; border-color: #7eb8f7; }
+
+    /* Layout */
+    main { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+    h1 { font-size: 1.4rem; margin-bottom: 1rem; color: #fff; }
+    h2 { font-size: 1.1rem; margin-bottom: .75rem; color: #ccc; }
+
+    /* Cards */
+    .card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 1rem; margin-bottom: .75rem; }
+    .card:hover { border-color: #444; }
+    .card-title { font-weight: 600; color: #fff; margin-bottom: .25rem; }
+    .card-url { font-size: .8rem; color: #7eb8f7; margin-bottom: .35rem; word-break: break-all; }
+    .card-meta { font-size: .75rem; color: #666; margin-bottom: .35rem; }
+    .card-snippet { font-size: .85rem; color: #aaa; line-height: 1.5; }
+
+    /* Stats grid */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: .75rem; margin-bottom: 1.5rem; }
+    .stat-box { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: .75rem 1rem; text-align: center; }
+    .stat-box .value { font-size: 1.8rem; font-weight: 700; color: #7eb8f7; }
+    .stat-box .label { font-size: .75rem; color: #666; margin-top: .2rem; }
+
+    /* Filters */
+    .filters { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; align-items: flex-end; }
+    .filters input, .filters select { background: #1a1a1a; border: 1px solid #333; color: #e0e0e0; border-radius: 6px; padding: .4rem .7rem; font-size: .85rem; outline: none; }
+    .filters input:focus, .filters select:focus { border-color: #7eb8f7; }
+    .filters input[type=search] { min-width: 200px; }
+
+    /* Crawl form */
+    .crawl-section { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 700px) { .crawl-section { grid-template-columns: 1fr; } }
+    .crawl-form { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 1rem; }
+    .crawl-form label { display: block; font-size: .8rem; color: #888; margin-bottom: .2rem; }
+    .crawl-form input, .crawl-form select { width: 100%; background: #111; border: 1px solid #333; color: #e0e0e0; border-radius: 6px; padding: .4rem .7rem; font-size: .85rem; margin-bottom: .6rem; }
+    .crawl-form input:focus, .crawl-form select:focus { border-color: #7eb8f7; outline: none; }
+    .btn { background: #2563eb; color: #fff; border: none; border-radius: 6px; padding: .4rem .9rem; font-size: .85rem; cursor: pointer; }
+    .btn:hover { background: #1d4ed8; }
+    .btn-danger { background: #dc2626; }
+    .btn-danger:hover { background: #b91c1c; }
+    .btn-sm { padding: .25rem .6rem; font-size: .78rem; }
+
+    /* Job list */
+    .job-item { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: .75rem 1rem; margin-bottom: .5rem; display: flex; align-items: center; gap: 1rem; }
+    .job-status { font-size: .75rem; font-weight: 600; padding: .2rem .5rem; border-radius: 4px; }
+    .job-status.running { background: #1e3a5f; color: #7eb8f7; }
+    .job-status.done { background: #14532d; color: #4ade80; }
+    .job-status.failed { background: #450a0a; color: #f87171; }
+    .job-status.cancelled { background: #292524; color: #a8a29e; }
+    .job-status.pending { background: #292524; color: #a8a29e; }
+
+    /* Progress log */
+    #progress-area { background: #111; border: 1px solid #2a2a2a; border-radius: 8px; padding: .75rem; font-size: .8rem; font-family: monospace; max-height: 200px; overflow-y: auto; margin-top: .75rem; }
+    #progress-area .log-line { color: #aaa; margin-bottom: .2rem; }
+    #progress-area .log-line.done { color: #4ade80; }
+    #progress-area .log-line.error { color: #f87171; }
+
+    /* Tag */
+    .tag { display: inline-block; background: #1e3a5f; color: #7eb8f7; border-radius: 4px; padding: .1rem .4rem; font-size: .72rem; margin-right: .25rem; }
+
+    /* HTMX loading indicator */
+    .htmx-indicator { opacity: 0; transition: opacity 200ms; }
+    .htmx-request .htmx-indicator { opacity: 1; }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="logo">🦅 Horus</span>
+    <a href="/" {% if active == 'home' %}class="active"{% endif %}>Overview</a>
+    <a href="/items" {% if active == 'items' %}class="active"{% endif %}>Items</a>
+    <a href="/pages" {% if active == 'pages' %}class="active"{% endif %}>Pages</a>
+    <a href="/crawl" {% if active == 'crawl' %}class="active"{% endif %}>Crawl</a>
+  </nav>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

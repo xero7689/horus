@@ -1,0 +1,26 @@
+{% if items %}
+  {% for item in items %}
+  <div class="card">
+    <div class="card-title">
+      <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.text[:120] if item.text else item.url }}</a>
+    </div>
+    <div class="card-meta">
+      <span class="tag">{{ item.site_id }}</span>
+      {% if item.author_name %}<span class="tag">@{{ item.author_name }}</span>{% endif %}
+      {{ item.timestamp.strftime('%Y-%m-%d %H:%M') }}
+    </div>
+    {% if item.extra.get('snippet') %}
+    <div class="card-snippet">{{ item.extra.snippet[:200] }}</div>
+    {% elif item.text and item.text|length > 120 %}
+    <div class="card-snippet">{{ item.text[120:320] }}</div>
+    {% endif %}
+    {% if item.extra.get('like_count') is not none %}
+    <div class="card-meta" style="margin-top:.35rem;">
+      ♥ {{ item.extra.like_count }}  ↩ {{ item.extra.get('reply_count', 0) }}
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+{% else %}
+  <p style="color:#666;margin-top:1rem;">No items found.</p>
+{% endif %}

@@ -468,6 +468,22 @@ def stats(site: str | None) -> None:
 
 
 # ---------------------------------------------------------------------------
+# serve
+# ---------------------------------------------------------------------------
+
+
+@main.command()
+@click.option("--host", default="127.0.0.1", show_default=True, help="Bind host")
+@click.option("--port", default=8000, show_default=True, type=int, help="Bind port")
+def serve(host: str, port: int) -> None:
+    """Start the Horus web UI at http://<host>:<port>."""
+    import uvicorn
+
+    console.print(f"Starting Horus web UI at [bold]http://{host}:{port}[/bold]")
+    uvicorn.run("horus.serve.app:app", host=host, port=port)
+
+
+# ---------------------------------------------------------------------------
 # display helpers
 # ---------------------------------------------------------------------------
 

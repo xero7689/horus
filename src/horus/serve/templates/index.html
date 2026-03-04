@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Horus — Overview{% endblock %}
+{% block content %}
+<h1>Overview</h1>
+
+<div class="stats-grid">
+  <div class="stat-box">
+    <div class="value">{{ stats.total }}</div>
+    <div class="label">Total Items</div>
+  </div>
+  {% for site_id, count in stats.by_site.items() %}
+  <div class="stat-box">
+    <div class="value">{{ count }}</div>
+    <div class="label">{{ site_id }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<h2>Available Adapters</h2>
+<div>
+  {% for cls in adapters %}
+  <div class="card">
+    <div class="card-title">{{ cls.display_name }}</div>
+    <div class="card-meta">
+      <span class="tag">{{ cls.site_id }}</span>
+      {% if cls.requires_login %}<span class="tag" style="background:#3b1f00;color:#fb923c;">login required</span>{% endif %}
+    </div>
+    <div class="card-snippet">{{ cls.description }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+{% block title %}Crawl — Horus{% endblock %}
+{% block content %}
+<h1>Crawl</h1>
+
+<div class="crawl-section">
+  <!-- Crawl form -->
+  <div>
+    <h2>Start a Crawl</h2>
+    <div class="crawl-form">
+      <label>Site</label>
+      <select id="site-select" onchange="updateKwargs()">
+        {% for adapter in adapters %}
+        <option value="{{ adapter.site_id }}"
+                data-options="{{ adapter.crawl_options | tojson }}">
+          {{ adapter.display_name }}
+        </option>
+        {% endfor %}
+      </select>
+
+      <div id="kwargs-fields"></div>
+
+      <label>Limit</label>
+      <input type="number" id="limit-input" value="50" min="1" max="1000">
+
+      <button class="btn" onclick="startCrawl()">Start Crawl</button>
+    </div>
+
+    <!-- Progress area (injected after submit) -->
+    <div id="crawl-result"></div>
+  </div>
+
+  <!-- Job list -->
+  <div>
+    <h2 style="display:flex;align-items:center;gap:.5rem;">
+      Jobs
+      <button class="btn btn-sm" hx-get="/crawl" hx-target="#job-list" hx-trigger="click">Refresh</button>
+    </h2>
+    <div id="job-list">
+      {% include "partials/job_list.html" %}
+    </div>
+  </div>
+</div>
+
+<script>
+const adapters = {{ adapters | tojson }};
+
+function updateKwargs() {
+  const select = document.getElementById('site-select');
+  const opts = JSON.parse(select.selectedOptions[0].dataset.options || '[]');
+  const container = document.getElementById('kwargs-fields');
+  container.innerHTML = opts.map(o => `
+    <label>${o.name.replace('--', '')}${o.required ? ' *' : ''}</label>
+    <input type="text" id="kwarg-${o.name.replace('--', '')}"
+           placeholder="${o.help || ''}"
+           value="${o.default || ''}">
+  `).join('');
+}
+
+async function startCrawl() {
+  const site = document.getElementById('site-select').value;
+  const limit = parseInt(document.getElementById('limit-input').value) || 50;
+
+  // collect kwargs from dynamic fields
+  const kwargs = {};
+  document.querySelectorAll('[id^="kwarg-"]').forEach(el => {
+    const key = el.id.replace('kwarg-', '');
+    if (el.value) kwargs[key] = el.value;
+  });
+
+  const resp = await fetch('/crawl', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({site, kwargs, limit}),
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json();
+    document.getElementById('crawl-result').innerHTML =
+      `<p style="color:#f87171;margin-top:.5rem;">Error: ${err.detail}</p>`;
+    return;
+  }
+
+  const {job_id} = await resp.json();
+  showProgress(job_id);
+
+  // Refresh job list
+  htmx.ajax('GET', '/crawl', {target: '#job-list'});
+}
+
+function showProgress(jobId) {
+  const area = document.getElementById('crawl-result');
+  area.innerHTML = `
+    <div id="progress-area" style="margin-top:.75rem;">
+      <div class="log-line">Job <strong>${jobId}</strong> started...</div>
+    </div>`;
+
+  const evtSource = new EventSource('/crawl/' + jobId + '/stream');
+  const log = document.getElementById('progress-area');
+
+  evtSource.addEventListener('log', e => {
+    const d = JSON.parse(e.data);
+    log.innerHTML += `<div class="log-line">${d.message}</div>`;
+    log.scrollTop = log.scrollHeight;
+  });
+  evtSource.addEventListener('progress', e => {
+    const d = JSON.parse(e.data);
+    const msg = d.scroll
+      ? `scroll #${d.scroll} — ${d.total} items`
+      : `fetched ${d.fetched}, new: ${d.new}`;
+    log.innerHTML += `<div class="log-line">${msg}</div>`;
+    log.scrollTop = log.scrollHeight;
+  });
+  evtSource.addEventListener('done', e => {
+    const d = JSON.parse(e.data);
+    log.innerHTML += `<div class="log-line done">✓ Done — ${d.items_found} found, ${d.items_new} new</div>`;
+    evtSource.close();
+    htmx.ajax('GET', '/crawl', {target: '#job-list'});
+  });
+  evtSource.addEventListener('error', e => {
+    const d = JSON.parse(e.data);
+    log.innerHTML += `<div class="log-line error">✗ Error: ${d.message}</div>`;
+    evtSource.close();
+    htmx.ajax('GET', '/crawl', {target: '#job-list'});
+  });
+  evtSource.addEventListener('status', e => {
+    const d = JSON.parse(e.data);
+    if (d.status === 'cancelled') {
+      log.innerHTML += `<div class="log-line error">Cancelled</div>`;
+      evtSource.close();
+    }
+  });
+}
+
+// Initialize kwargs for default adapter
+updateKwargs();
+</script>
+{% endblock %}
