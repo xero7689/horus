@@ -54,6 +54,11 @@ horus export --site web --format markdown --output ./export/  # 從 DB 匯出 .m
 horus stats                                      # 統計資訊
 ```
 
+## 開發規範
+
+- 新增或修改 adapter 後，**必須更新** `~/.claude/skills/horus-scraping/SKILL.md`，確保 skill 與實作同步。
+- 使用 `horus-scraping` skill 作為開發新 adapter 的參考指南。
+
 ## 新增 Site Adapter（3 步驟）
 
 1. 建立 `src/horus/adapters/mysite.py`，繼承 `SiteAdapter`，實作 3 個 abstract method：
