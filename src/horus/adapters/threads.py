@@ -1,3 +1,5 @@
+import json
+import re
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -96,6 +98,77 @@ def _parse_item(
             "reply_to_username": reply_to_username,
         },
     )
+
+
+def _extract_thread_items_arrays(html: str) -> list[list[dict[str, Any]]]:
+    """Extract all thread_items arrays from SSR HTML using bracket-balanced parsing."""
+    results: list[list[dict[str, Any]]] = []
+    pattern = re.compile(r'"thread_items"\s*:\s*\[')
+    for match in pattern.finditer(html):
+        arr_start = match.end() - 1  # position of '['
+        depth = 0
+        end = arr_start
+        for i in range(arr_start, min(arr_start + 200_000, len(html))):
+            ch = html[i]
+            if ch == '[':
+                depth += 1
+            elif ch == ']':
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        try:
+            arr = json.loads(html[arr_start:end])
+            if isinstance(arr, list):
+                results.append(arr)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return results
+
+
+def parse_comments_from_html(html: str, *, post_pk: str) -> list[ScrapedItem]:
+    """Parse SSR thread_items arrays from a Threads post page HTML.
+
+    Skips the first array (original post). Each subsequent array is a comment
+    group: first item is a root comment replying to the post, remaining items
+    are nested replies.
+
+    Args:
+        html: Full rendered HTML of the post page.
+        post_pk: The PK of the original post (used as conversation_id and
+                 parent_post_id for root-level comments).
+
+    Returns:
+        List of ScrapedItems for all comments, deduplicated by id.
+    """
+    arrays = _extract_thread_items_arrays(html)
+    if not arrays:
+        return []
+
+    # Skip first array — it's the original post
+    comment_arrays = arrays[1:]
+
+    seen: set[str] = set()
+    items: list[ScrapedItem] = []
+
+    for arr in comment_arrays:
+        prev_id: str | None = post_pk
+        for thread_item in arr:
+            post_data = thread_item.get("post")
+            if not post_data:
+                continue
+            item = _parse_item(
+                post_data,
+                parent_post_id=prev_id,
+                conversation_id=post_pk,
+                is_reply=True,
+            )
+            if item and item.id not in seen:
+                seen.add(item.id)
+                items.append(item)
+                prev_id = item.id
+
+    return items
 
 
 class ThreadsAdapter(SiteAdapter):
