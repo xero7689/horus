@@ -221,9 +221,19 @@ async def _crawl(
             async with BaseScraper(**scraper_kwargs) as scraper:
                 if adapter_cls.has_page_mode:
                     # Page-based path: HTML → Markdown
+                    wait_for = getattr(adapter_cls, "wait_for_selector", None)
+                    page_script = getattr(adapter_cls, "page_script", None)
+                    content_script = getattr(adapter_cls, "content_script", None)
                     for url in urls:
                         console.print(f"Fetching [cyan]{url}[/cyan]...")
-                        page = await scraper.scrape_page(url, state_path, site_id=site)
+                        page = await scraper.scrape_page(
+                            url,
+                            state_path,
+                            site_id=site,
+                            wait_for=wait_for,
+                            page_script=page_script,
+                            content_script=content_script,
+                        )
                         is_new = storage.upsert_page(page)
                         total_found += 1
                         total_new += int(is_new)

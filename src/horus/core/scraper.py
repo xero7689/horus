@@ -167,8 +167,18 @@ class BaseScraper(BaseBrowser):
         *,
         site_id: str = "web",
         wait_for: str | None = None,
+        page_script: str | None = None,
+        content_script: str | None = None,
     ) -> ScrapedPage:
-        """Navigate to URL, extract full rendered HTML, convert to Markdown."""
+        """Navigate to URL, extract full rendered HTML, convert to Markdown.
+
+        Args:
+            page_script: Optional JavaScript evaluated after load, before extraction.
+                Useful for clicking "See more" buttons or other DOM mutations.
+            content_script: Optional JavaScript that returns a string — used instead of
+                full page.content() for targeted content extraction (e.g. Facebook
+                post body only). Must return a string or null.
+        """
         assert self._browser is not None, "Use as async context manager"
 
         context = await self.new_context(state_path=state_path)
@@ -182,8 +192,21 @@ class BaseScraper(BaseBrowser):
                 pass  # timeout is okay — grab whatever rendered
             if wait_for:
                 await page.wait_for_selector(wait_for, timeout=10000)
+            if page_script:
+                try:
+                    await page.evaluate(page_script)
+                    await asyncio.sleep(1)  # let DOM settle after script
+                except Exception:
+                    pass  # script failure is non-fatal
             title = await page.title()
-            html = await page.content()
+            if content_script:
+                try:
+                    extracted = await page.evaluate(content_script)
+                    html = str(extracted) if extracted else await page.content()
+                except Exception:
+                    html = await page.content()
+            else:
+                html = await page.content()
         finally:
             await context.close()
 
