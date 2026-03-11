@@ -129,9 +129,13 @@ def _extract_thread_items_arrays(html: str) -> list[list[dict[str, Any]]]:
 def parse_comments_from_html(html: str, *, post_pk: str) -> list[ScrapedItem]:
     """Parse SSR thread_items arrays from a Threads post page HTML.
 
-    Skips the first array (original post). Each subsequent array is a comment
-    group: first item is a root comment replying to the post, remaining items
-    are nested replies.
+    The first array is typically the original post. This is verified by checking
+    whether the first item's pk matches ``post_pk``. If it matches, the array is
+    skipped. If it does not match (e.g. the original post is absent from the
+    response), all arrays are treated as comment groups.
+
+    Each comment-group array contains a root comment (replying to the post) as
+    its first item, followed by zero or more nested replies.
 
     Args:
         html: Full rendered HTML of the post page.
@@ -145,8 +149,16 @@ def parse_comments_from_html(html: str, *, post_pk: str) -> list[ScrapedItem]:
     if not arrays:
         return []
 
-    # Skip first array — it's the original post
-    comment_arrays = arrays[1:]
+    # The first array is typically the original post; verify by pk before skipping
+    if arrays and arrays[0]:
+        first_post_data = arrays[0][0].get("post", {}) if isinstance(arrays[0][0], dict) else {}
+        first_pk = str(first_post_data.get("pk", ""))
+        if first_pk == post_pk:
+            comment_arrays = arrays[1:]
+        else:
+            comment_arrays = arrays
+    else:
+        comment_arrays = arrays[1:] if arrays else []
 
     seen: set[str] = set()
     items: list[ScrapedItem] = []

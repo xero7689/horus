@@ -1,7 +1,8 @@
 import json
 from datetime import UTC
+from typing import Any
 
-from horus.adapters.threads import ThreadsAdapter
+from horus.adapters.threads import ThreadsAdapter, parse_comments_from_html
 
 # ---------------------------------------------------------------------------
 # Sample GraphQL fixture data
@@ -261,7 +262,7 @@ def _make_post_item(
     text: str,
     taken_at: int = 1704067200,
     reply_to_username: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     return {
         "post": {
             "pk": pk,
@@ -282,12 +283,10 @@ def _make_post_item(
 
 class TestParseCommentsFromHtml:
     def test_returns_empty_when_no_thread_items(self) -> None:
-        from horus.adapters.threads import parse_comments_from_html
         result = parse_comments_from_html("<html></html>", post_pk="111")
         assert result == []
 
     def test_skips_first_array_which_is_original_post(self) -> None:
-        from horus.adapters.threads import parse_comments_from_html
         original_post = [_make_post_item("111", "alice", "Original")]
         comment1 = [_make_post_item("222", "bob", "First comment")]
         html = _make_ssr_html([original_post, comment1])
@@ -296,7 +295,6 @@ class TestParseCommentsFromHtml:
         assert items[0].id == "222"
 
     def test_root_comment_has_correct_parent_and_conversation_id(self) -> None:
-        from horus.adapters.threads import parse_comments_from_html
         original_post = [_make_post_item("111", "alice", "Original")]
         comment = [_make_post_item("222", "bob", "First comment", reply_to_username="alice")]
         html = _make_ssr_html([original_post, comment])
@@ -307,7 +305,6 @@ class TestParseCommentsFromHtml:
         assert item.extra["conversation_id"] == "111"
 
     def test_nested_reply_links_to_root_comment(self) -> None:
-        from horus.adapters.threads import parse_comments_from_html
         original_post = [_make_post_item("111", "alice", "Original")]
         thread = [
             _make_post_item("222", "bob", "Root comment", reply_to_username="alice"),
@@ -323,7 +320,6 @@ class TestParseCommentsFromHtml:
         assert nested.extra["conversation_id"] == "111"
 
     def test_multiple_comment_groups(self) -> None:
-        from horus.adapters.threads import parse_comments_from_html
         original_post = [_make_post_item("111", "alice", "Original")]
         group1 = [_make_post_item("222", "bob", "Comment 1", reply_to_username="alice")]
         group2 = [_make_post_item("333", "carol", "Comment 2", reply_to_username="alice")]
@@ -334,7 +330,6 @@ class TestParseCommentsFromHtml:
         assert ids == {"222", "333"}
 
     def test_deduplicates_by_id(self) -> None:
-        from horus.adapters.threads import parse_comments_from_html
         original_post = [_make_post_item("111", "alice", "Original")]
         dup = [_make_post_item("222", "bob", "Comment")]
         html = _make_ssr_html([original_post, dup, dup])
