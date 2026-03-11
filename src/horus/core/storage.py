@@ -313,5 +313,19 @@ class HorusStorage:
         row = self._conn.execute("SELECT * FROM pages WHERE url = ?", (url,)).fetchone()
         return _row_to_page(row) if row else None
 
+    def delete_item(self, site_id: str, item_id: str) -> bool:
+        """Delete an item by (site_id, item_id). Returns True if found and deleted."""
+        cur = self._conn.execute(
+            "DELETE FROM items WHERE site_id = ? AND id = ?", (site_id, item_id)
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
+    def delete_page(self, url: str) -> bool:
+        """Delete a page by URL. Returns True if found and deleted."""
+        cur = self._conn.execute("DELETE FROM pages WHERE url = ?", (url,))
+        self._conn.commit()
+        return cur.rowcount > 0
+
     def close(self) -> None:
         self._conn.close()

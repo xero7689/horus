@@ -19,6 +19,15 @@
       ♥ {{ item.extra.like_count }}  ↩ {{ item.extra.get('reply_count', 0) }}
     </div>
     {% endif %}
+    <div style="margin-top:.5rem;text-align:right;">
+      <button class="btn btn-sm btn-danger"
+              hx-delete="/items/{{ item.site_id }}/{{ item.id }}"
+              hx-confirm="刪除這則 item？"
+              hx-target="closest .card"
+              hx-swap="outerHTML">
+        刪除
+      </button>
+    </div>
   </div>
   {% endfor %}
 {% else %}

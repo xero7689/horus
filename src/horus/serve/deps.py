@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING
+from urllib.parse import quote
 
 from fastapi.templating import Jinja2Templates
 
@@ -23,6 +24,7 @@ def init(settings, manager: CrawlerManager, templates_dir: Path) -> None:  # typ
     _settings = settings
     _manager = manager
     _templates = Jinja2Templates(directory=str(templates_dir))
+    _templates.env.filters["urlencode"] = quote
 
 
 def get_storage() -> HorusStorage:

@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from horus.adapters import list_adapters
@@ -36,3 +36,14 @@ async def list_pages(
             "active": "pages",
         },
     )
+
+
+@router.delete("")
+async def delete_page(
+    url: str = Query(...),
+    storage: HorusStorage = Depends(get_storage),
+) -> Response:
+    deleted = storage.delete_page(url)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Page not found")
+    return Response(status_code=200)

@@ -10,6 +10,15 @@
       {{ page.fetched_at.strftime('%Y-%m-%d %H:%M') }}
     </div>
     <div class="card-snippet">{{ page.markdown[:200].replace('\n', ' ') }}…</div>
+    <div style="margin-top:.5rem;text-align:right;">
+      <button class="btn btn-sm btn-danger"
+              hx-delete="/pages?url={{ page.url | urlencode }}"
+              hx-confirm="刪除此頁面？"
+              hx-target="closest .card"
+              hx-swap="outerHTML">
+        刪除
+      </button>
+    </div>
   </div>
   {% endfor %}
 {% else %}

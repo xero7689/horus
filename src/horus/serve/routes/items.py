@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from horus.adapters import list_adapters
@@ -56,3 +56,15 @@ async def list_items(
             "active": "items",
         },
     )
+
+
+@router.delete("/{site_id}/{item_id}")
+async def delete_item(
+    site_id: str,
+    item_id: str,
+    storage: HorusStorage = Depends(get_storage),
+) -> Response:
+    deleted = storage.delete_item(site_id, item_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Item not found")
+    return Response(status_code=200)
