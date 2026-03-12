@@ -3,10 +3,13 @@ import re
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from horus.adapters.base import SiteAdapter
 from horus.models import ScrapedItem
+
+if TYPE_CHECKING:
+    from horus.core.scraper import CommentParser
 
 _MEDIA_TYPE_MAP = {
     1: "IMAGE",
@@ -288,6 +291,10 @@ class ThreadsAdapter(SiteAdapter):
                     return [f"https://www.threads.net/@{u}/replies" for u in usernames]
                 return [f"https://www.threads.net/@{u}" for u in usernames]
         raise ValueError("threads adapter requires --user or --url")
+
+    def get_comment_parser(self) -> "CommentParser":
+        """Return parse_comments_from_html as the comment parser."""
+        return parse_comments_from_html
 
     def get_crawl_options(self) -> list[dict[str, Any]]:
         return [

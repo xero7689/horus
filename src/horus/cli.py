@@ -289,15 +289,15 @@ async def _crawl(
                         storage.log_crawl(site, url, total_found, total_new, started_at)
 
                     # Fetch comments for posts collected during this crawl
-                    if with_comments and crawled_top_level:
-                        from horus.adapters.threads import parse_comments_from_html
+                    comment_parser = adapter.get_comment_parser() if with_comments else None
+                    if comment_parser and crawled_top_level:
                         console.print(f"Fetching comments for {len(crawled_top_level)} posts...")
                         for post in crawled_top_level:
                             try:
                                 comment_items = await scraper.scrape_comments(
                                     url=post.url,
                                     post_pk=post.id,
-                                    parser=parse_comments_from_html,
+                                    parser=comment_parser,
                                     state_path=state_path,
                                 )
                                 if comment_items:

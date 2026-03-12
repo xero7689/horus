@@ -1,8 +1,11 @@
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from horus.models import ScrapedItem, SiteAdapterConfig
+
+if TYPE_CHECKING:
+    from horus.core.scraper import CommentParser
 
 
 class SiteAdapter(ABC):
@@ -56,6 +59,14 @@ class SiteAdapter(ABC):
     def post_process(self, items: list[ScrapedItem]) -> list[ScrapedItem]:
         """Optional post-processing hook after crawl."""
         return items
+
+    def get_comment_parser(self) -> "CommentParser | None":
+        """Return a comment parser callable, or None if comments are not supported.
+
+        The callable signature: (html: str, *, post_pk: str) -> list[ScrapedItem]
+        Override in adapters that support --with-comments.
+        """
+        return None
 
     @classmethod
     def get_config(cls) -> SiteAdapterConfig:

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from click.testing import CliRunner
 
+from horus.adapters.threads import parse_comments_from_html
 from horus.cli import main
 from horus.models import ScrapedItem
 
@@ -37,11 +38,26 @@ class TestCrawlWithComments:
             return [post1, post2]
 
         async def fake_scrape_comments(url, post_pk, parser, state_path=None):
-            scrape_comments_calls.append({"url": url, "post_pk": post_pk})
+            scrape_comments_calls.append({"url": url, "post_pk": post_pk, "parser": parser})
             return [comment1]
+
+        # Build a mock adapter that has get_comment_parser()
+        mock_adapter = MagicMock()
+        mock_adapter.get_response_filter.return_value = lambda url, body: False
+        mock_adapter.parse_response.return_value = []
+        mock_adapter.get_urls.return_value = ["https://www.threads.net/@alice"]
+        mock_adapter.post_process.side_effect = lambda x: x
+        mock_adapter.get_comment_parser.return_value = parse_comments_from_html
+
+        mock_adapter_cls = MagicMock()
+        mock_adapter_cls.return_value = mock_adapter
+        mock_adapter_cls.has_http_mode = False
+        mock_adapter_cls.has_page_mode = False
+        mock_adapter_cls.requires_login = False
 
         runner = CliRunner()
         with (
+            patch("horus.cli.get_adapter", return_value=mock_adapter_cls),
             patch("horus.cli.BaseScraper") as MockScraper,
             patch("horus.cli._get_storage") as mock_storage_fn,
             patch("horus.cli._get_settings") as mock_settings_fn,
@@ -72,9 +88,12 @@ class TestCrawlWithComments:
                 ["crawl", "threads", "--user", "alice", "--with-comments"],
             )
 
-        # scrape_comments must be called once per non-reply post collected during crawl
+        # scrape_comments must be called once per non-reply post
         assert len(scrape_comments_calls) == 2, (
-            f"Expected 2 calls, got {len(scrape_comments_calls)}. Result: {result.output}"
+            f"Expected 2 calls, got {len(scrape_comments_calls)}. Output: {result.output}"
         )
         post_pks = {c["post_pk"] for c in scrape_comments_calls}
         assert post_pks == {"p1", "p2"}
+        # Verify correct parser was passed
+        for call in scrape_comments_calls:
+            assert call["parser"] is parse_comments_from_html
