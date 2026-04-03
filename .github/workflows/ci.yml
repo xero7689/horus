@@ -33,6 +33,6 @@ jobs:
           enable-cache: true
       - run: uv sync
       - run: uv run pytest tests/ -v --cov=horus --cov-report=xml
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v6
         with:
           files: coverage.xml
