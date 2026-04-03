@@ -21,6 +21,15 @@ jobs:
       - run: uv run ruff check src/ tests/
       - run: uv run bandit -r src/ -q -c pyproject.toml
       - run: uv run ty check src/
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   test:
     runs-on: ubuntu-latest
     steps:
