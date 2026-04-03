@@ -113,9 +113,9 @@ def _extract_thread_items_arrays(html: str) -> list[list[dict[str, Any]]]:
         end = arr_start
         for i in range(arr_start, min(arr_start + 200_000, len(html))):
             ch = html[i]
-            if ch == '[':
+            if ch == "[":
                 depth += 1
-            elif ch == ']':
+            elif ch == "]":
                 depth -= 1
                 if depth == 0:
                     end = i + 1
