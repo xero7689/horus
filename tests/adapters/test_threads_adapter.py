@@ -1,6 +1,8 @@
+import json
 from datetime import UTC
+from typing import Any
 
-from horus.adapters.threads import ThreadsAdapter
+from horus.adapters.threads import ThreadsAdapter, parse_comments_from_html
 
 # ---------------------------------------------------------------------------
 # Sample GraphQL fixture data
@@ -240,3 +242,96 @@ class TestGetUrls:
             assert False, "Should have raised ValueError"
         except ValueError:
             pass
+
+
+# ---------------------------------------------------------------------------
+# Helpers to build minimal SSR HTML fixture
+# ---------------------------------------------------------------------------
+
+def _make_ssr_html(thread_item_arrays: list[list[dict]]) -> str:
+    """Wrap thread_items arrays in minimal SSR HTML that parse_comments_from_html can parse."""
+    parts = []
+    for arr in thread_item_arrays:
+        parts.append(f'"thread_items":{json.dumps(arr)}')
+    return "<script>" + ",".join(parts) + "</script>"
+
+
+def _make_post_item(
+    pk: str,
+    username: str,
+    text: str,
+    taken_at: int = 1704067200,
+    reply_to_username: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "post": {
+            "pk": pk,
+            "code": pk,
+            "taken_at": taken_at,
+            "user": {"pk": f"u_{pk}", "username": username},
+            "caption": {"text": text},
+            "media_type": 19,
+            "like_count": 1,
+            "text_post_app_info": {
+                "direct_reply_count": 0,
+                "repost_count": 0,
+                "reply_to_author": {"username": reply_to_username} if reply_to_username else None,
+            },
+        }
+    }
+
+
+class TestParseCommentsFromHtml:
+    def test_returns_empty_when_no_thread_items(self) -> None:
+        result = parse_comments_from_html("<html></html>", post_pk="111")
+        assert result == []
+
+    def test_skips_first_array_which_is_original_post(self) -> None:
+        original_post = [_make_post_item("111", "alice", "Original")]
+        comment1 = [_make_post_item("222", "bob", "First comment")]
+        html = _make_ssr_html([original_post, comment1])
+        items = parse_comments_from_html(html, post_pk="111")
+        assert len(items) == 1
+        assert items[0].id == "222"
+
+    def test_root_comment_has_correct_parent_and_conversation_id(self) -> None:
+        original_post = [_make_post_item("111", "alice", "Original")]
+        comment = [_make_post_item("222", "bob", "First comment", reply_to_username="alice")]
+        html = _make_ssr_html([original_post, comment])
+        items = parse_comments_from_html(html, post_pk="111")
+        item = items[0]
+        assert item.extra["is_reply"] is True
+        assert item.extra["parent_post_id"] == "111"
+        assert item.extra["conversation_id"] == "111"
+
+    def test_nested_reply_links_to_root_comment(self) -> None:
+        original_post = [_make_post_item("111", "alice", "Original")]
+        thread = [
+            _make_post_item("222", "bob", "Root comment", reply_to_username="alice"),
+            _make_post_item("333", "carol", "Reply to bob", reply_to_username="bob"),
+        ]
+        html = _make_ssr_html([original_post, thread])
+        items = parse_comments_from_html(html, post_pk="111")
+        assert len(items) == 2
+        root = next(i for i in items if i.id == "222")
+        nested = next(i for i in items if i.id == "333")
+        assert root.extra["parent_post_id"] == "111"
+        assert nested.extra["parent_post_id"] == "222"
+        assert nested.extra["conversation_id"] == "111"
+
+    def test_multiple_comment_groups(self) -> None:
+        original_post = [_make_post_item("111", "alice", "Original")]
+        group1 = [_make_post_item("222", "bob", "Comment 1", reply_to_username="alice")]
+        group2 = [_make_post_item("333", "carol", "Comment 2", reply_to_username="alice")]
+        html = _make_ssr_html([original_post, group1, group2])
+        items = parse_comments_from_html(html, post_pk="111")
+        assert len(items) == 2
+        ids = {i.id for i in items}
+        assert ids == {"222", "333"}
+
+    def test_deduplicates_by_id(self) -> None:
+        original_post = [_make_post_item("111", "alice", "Original")]
+        dup = [_make_post_item("222", "bob", "Comment")]
+        html = _make_ssr_html([original_post, dup, dup])
+        items = parse_comments_from_html(html, post_pk="111")
+        assert len(items) == 1

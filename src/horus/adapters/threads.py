@@ -1,10 +1,15 @@
+import json
+import re
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from horus.adapters.base import SiteAdapter
 from horus.models import ScrapedItem
+
+if TYPE_CHECKING:
+    from horus.core.scraper import CommentParser
 
 _MEDIA_TYPE_MAP = {
     1: "IMAGE",
@@ -96,6 +101,89 @@ def _parse_item(
             "reply_to_username": reply_to_username,
         },
     )
+
+
+def _extract_thread_items_arrays(html: str) -> list[list[dict[str, Any]]]:
+    """Extract all thread_items arrays from SSR HTML using bracket-balanced parsing."""
+    results: list[list[dict[str, Any]]] = []
+    pattern = re.compile(r'"thread_items"\s*:\s*\[')
+    for match in pattern.finditer(html):
+        arr_start = match.end() - 1  # position of '['
+        depth = 0
+        end = arr_start
+        for i in range(arr_start, min(arr_start + 200_000, len(html))):
+            ch = html[i]
+            if ch == '[':
+                depth += 1
+            elif ch == ']':
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        try:
+            arr = json.loads(html[arr_start:end])
+            if isinstance(arr, list):
+                results.append(arr)
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return results
+
+
+def parse_comments_from_html(html: str, *, post_pk: str) -> list[ScrapedItem]:
+    """Parse SSR thread_items arrays from a Threads post page HTML.
+
+    The first array is typically the original post. This is verified by checking
+    whether the first item's pk matches ``post_pk``. If it matches, the array is
+    skipped. If it does not match (e.g. the original post is absent from the
+    response), all arrays are treated as comment groups.
+
+    Each comment-group array contains a root comment (replying to the post) as
+    its first item, followed by zero or more nested replies.
+
+    Args:
+        html: Full rendered HTML of the post page.
+        post_pk: The PK of the original post (used as conversation_id and
+                 parent_post_id for root-level comments).
+
+    Returns:
+        List of ScrapedItems for all comments, deduplicated by id.
+    """
+    arrays = _extract_thread_items_arrays(html)
+    if not arrays:
+        return []
+
+    # The first array is typically the original post; verify by pk before skipping
+    if arrays and arrays[0]:
+        first_post_data = arrays[0][0].get("post", {}) if isinstance(arrays[0][0], dict) else {}
+        first_pk = str(first_post_data.get("pk", ""))
+        if first_pk == post_pk:
+            comment_arrays = arrays[1:]
+        else:
+            comment_arrays = arrays
+    else:
+        comment_arrays = arrays[1:] if arrays else []
+
+    seen: set[str] = set()
+    items: list[ScrapedItem] = []
+
+    for arr in comment_arrays:
+        prev_id: str | None = post_pk
+        for thread_item in arr:
+            post_data = thread_item.get("post")
+            if not post_data:
+                continue
+            item = _parse_item(
+                post_data,
+                parent_post_id=prev_id,
+                conversation_id=post_pk,
+                is_reply=True,
+            )
+            if item and item.id not in seen:
+                seen.add(item.id)
+                items.append(item)
+                prev_id = item.id
+
+    return items
 
 
 class ThreadsAdapter(SiteAdapter):
@@ -203,6 +291,10 @@ class ThreadsAdapter(SiteAdapter):
                     return [f"https://www.threads.net/@{u}/replies" for u in usernames]
                 return [f"https://www.threads.net/@{u}" for u in usernames]
         raise ValueError("threads adapter requires --user or --url")
+
+    def get_comment_parser(self) -> "CommentParser":
+        """Return parse_comments_from_html as the comment parser."""
+        return parse_comments_from_html
 
     def get_crawl_options(self) -> list[dict[str, Any]]:
         return [

@@ -3,7 +3,7 @@ import random
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from bs4 import BeautifulSoup
 from markdownify import markdownify
@@ -13,6 +13,10 @@ from horus.core.browser import BaseBrowser
 from horus.models import ScrapedItem, ScrapedPage
 
 _STRIP_TAGS = ["script", "style", "nav", "footer", "header", "aside", "noscript"]
+
+
+class CommentParser(Protocol):
+    def __call__(self, html: str, *, post_pk: str) -> list[ScrapedItem]: ...
 
 
 def _html_to_markdown(html: str) -> str:
@@ -212,6 +216,40 @@ class BaseScraper(BaseBrowser):
 
         markdown = _html_to_markdown(html)
         return ScrapedPage(url=url, site_id=site_id, title=title, markdown=markdown)
+
+    async def scrape_comments(
+        self,
+        url: str,
+        post_pk: str,
+        parser: CommentParser,
+        state_path: Path | None = None,
+    ) -> list[ScrapedItem]:
+        """Navigate to a post URL and extract comments from SSR HTML.
+
+        Args:
+            url: Full URL of the post page.
+            post_pk: PK of the post (passed to parser as keyword arg).
+            parser: Callable(html, *, post_pk) -> list[ScrapedItem].
+            state_path: Optional saved browser auth state.
+
+        Returns:
+            List of ScrapedItems parsed from the page HTML.
+        """
+        assert self._browser is not None, "Use as async context manager"
+
+        context = await self.new_context(state_path=state_path)
+        page = await context.new_page()
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception:
+                pass
+            html = await page.content()
+        finally:
+            await context.close()
+
+        return parser(html, post_pk=post_pk)
 
     async def _scroll_page(self, page: Page) -> None:
         """Scroll to bottom with random delay."""

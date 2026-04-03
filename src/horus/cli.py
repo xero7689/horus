@@ -254,6 +254,10 @@ async def _crawl(
                     if since is None:
                         since = storage.get_latest_timestamp(site)
 
+                    with_comments = kwargs.get("with_comments") == "true"
+                    # Populated in on_batch when with_comments is True
+                    crawled_top_level: list[ScrapedItem] = []
+
                     def on_progress(scroll: int, total: int) -> None:
                         console.print(f"  [dim]scroll #{scroll} — {total} items so far[/dim]")
 
@@ -265,6 +269,11 @@ async def _crawl(
                         total_new += new_count
                         for item in batch:
                             _emit(item)
+                        # Collect top-level posts for comment fetch
+                        if with_comments:
+                            crawled_top_level.extend(
+                                p for p in batch if not p.extra.get("is_reply", False)
+                            )
 
                     for url in urls:
                         console.print(f"Crawling [cyan]{url}[/cyan]...")
@@ -278,6 +287,32 @@ async def _crawl(
                             on_batch=on_batch,
                         )
                         storage.log_crawl(site, url, total_found, total_new, started_at)
+
+                    # Fetch comments for posts collected during this crawl
+                    comment_parser = adapter.get_comment_parser() if with_comments else None
+                    if comment_parser and crawled_top_level:
+                        console.print(f"Fetching comments for {len(crawled_top_level)} posts...")
+                        for post in crawled_top_level:
+                            try:
+                                comment_items = await scraper.scrape_comments(
+                                    url=post.url,
+                                    post_pk=post.id,
+                                    parser=comment_parser,
+                                    state_path=state_path,
+                                )
+                                if comment_items:
+                                    new_count = storage.upsert_items(comment_items)
+                                    total_found += len(comment_items)
+                                    total_new += new_count
+                                    console.print(
+                                        f"  [dim]{post.url}: {len(comment_items)} comments "
+                                        f"({new_count} new)[/dim]"
+                                    )
+                            except Exception as e:
+                                console.print(
+                                    f"  [yellow]Warning: failed to fetch comments "
+                                    f"for {post.url}: {e}[/yellow]"
+                                )
     except (KeyboardInterrupt, asyncio.CancelledError):
         interrupted = True
 
