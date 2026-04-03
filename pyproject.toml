@@ -28,6 +28,7 @@ dev = [
     "bandit>=1.9.4",
     "ty>=0.0.28",
     "pre-commit>=4.5.1",
+    "pytest-cov>=7.1.0",
 ]
 
 [build-system]
