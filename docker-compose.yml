@@ -1,0 +1,10 @@
+services:
+  horus:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ~/.horus:/data
+    environment:
+      - HORUS_BASE_DIR=/data
+      - HORUS_HEADLESS=true
