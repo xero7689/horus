@@ -35,7 +35,7 @@ _HEADERS = {
 
 def _make_item_id(url: str, query: str) -> str:
     """Stable ID: SHA-1 of (url, query) truncated to 16 hex chars."""
-    digest = hashlib.sha1(f"{url}|{query}".encode()).hexdigest()
+    digest = hashlib.sha1(f"{url}|{query}".encode()).hexdigest()  # nosec B324
     return digest[:16]
 
 
@@ -106,7 +106,7 @@ class DuckDuckGoAdapter(SiteAdapter):
     def _fetch_html(self, query: str) -> str:
         data = urllib.parse.urlencode({"q": query, "b": "", "kl": ""}).encode()
         req = urllib.request.Request(_DDG_HTML_URL, data=data, headers=_HEADERS)
-        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310
+        with urllib.request.urlopen(req, timeout=15) as resp:  # noqa: S310  # nosec B310
             return resp.read().decode("utf-8")  # type: ignore[no-any-return]
 
     def parse_html(self, html: str, *, query: str) -> list[ScrapedItem]:
