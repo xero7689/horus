@@ -208,7 +208,7 @@ class HorusStorage:
             params: list[str | int] = [query]
         else:
             sql = "SELECT i.* FROM items i WHERE i.text LIKE ?"
-            params = [f"%{query}%"]
+            params: list[str | int] = [f"%{query}%"]
 
         if site_id:
             sql += " AND i.site_id = ?"
