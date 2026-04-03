@@ -26,6 +26,7 @@ dev = [
     "pytest-asyncio>=0.24",
     "mypy>=1.13",
     "ruff>=0.9",
+    "bandit>=1.9.4",
 ]
 
 [build-system]
@@ -45,6 +46,12 @@ select = ["E", "F", "I", "UP"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
+
+[tool.bandit]
+# B101: assert — internal invariants, not user input
+# B110: try/except/pass — intentional for non-fatal errors
+# B311: random — scroll jitter, not security
+skips = ["B101", "B110", "B311"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
