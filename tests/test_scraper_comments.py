@@ -1,4 +1,5 @@
 """Unit tests for BaseScraper.scrape_comments() using a mock page."""
+
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 

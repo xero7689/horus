@@ -248,6 +248,7 @@ class TestGetUrls:
 # Helpers to build minimal SSR HTML fixture
 # ---------------------------------------------------------------------------
 
+
 def _make_ssr_html(thread_item_arrays: list[list[dict]]) -> str:
     """Wrap thread_items arrays in minimal SSR HTML that parse_comments_from_html can parse."""
     parts = []

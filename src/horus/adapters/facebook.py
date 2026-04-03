@@ -69,9 +69,7 @@ class FacebookAdapter(SiteAdapter):
         if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
             try:
                 lines = [
-                    line.strip()
-                    for line in sys.stdin
-                    if line.strip() and not line.startswith("#")
+                    line.strip() for line in sys.stdin if line.strip() and not line.startswith("#")
                 ]
                 if lines:
                     return lines
