@@ -20,7 +20,7 @@ jobs:
       - run: uv sync
       - run: uv run ruff check src/ tests/
       - run: uv run bandit -r src/ -q -c pyproject.toml
-      - run: uv run mypy src/
+      - run: uv run ty check src/
   test:
     runs-on: ubuntu-latest
     steps:
