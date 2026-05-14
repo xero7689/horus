@@ -94,6 +94,34 @@ class TestBuildThreadTrees:
         assert len(roots[0].children) == 1
         assert len(roots[1].children) == 0
 
+    def test_true_root_marked_is_root(self) -> None:
+        items = [
+            _item("p1", "root"),
+            _item("r1", "reply", minute=5, is_reply=True, parent="p1", conv="p1"),
+        ]
+        roots = build_thread_trees(items)
+        assert roots[0].is_root is True
+
+    def test_orphan_root_without_conversation_is_not_marked_root(self) -> None:
+        items = [
+            _item("r1", "orphan", minute=5, is_reply=True, parent="missing"),
+        ]
+        roots = build_thread_trees(items)
+        assert len(roots) == 1
+        assert roots[0].is_root is False
+
+    def test_cycle_does_not_infinite_loop(self) -> None:
+        items = [
+            _item("a", "first", is_reply=True, parent="b", conv="a"),
+            _item("b", "second", minute=5, is_reply=True, parent="a", conv="a"),
+        ]
+        roots = build_thread_trees(items)
+        # at least one must be promoted to root to break the cycle
+        root_ids = [r.item.id for r in roots]
+        assert "a" in root_ids or "b" in root_ids
+        # rendering must terminate
+        render_thread_md(roots[0])
+
 
 class TestRenderThreadMd:
     def test_no_replies(self) -> None:
@@ -131,3 +159,21 @@ class TestRenderThreadMd:
         assert "- @bob" in out
         assert "  - @carol" in out
         assert "> 回覆 @bob" in out
+
+    def test_multiline_reply_uses_continuation_indent(self) -> None:
+        items = [
+            _item("p1", "root"),
+            _item(
+                "r1",
+                "line one\nline two\nline three",
+                author="bob",
+                minute=5,
+                is_reply=True,
+                parent="p1",
+                conv="p1",
+            ),
+        ]
+        out = render_thread_md(build_thread_trees(items)[0])
+        assert "- @bob · 14:05：line one" in out
+        assert "  line two" in out
+        assert "  line three" in out

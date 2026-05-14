@@ -498,12 +498,29 @@ def _export_json(items: list[ScrapedItem], path: Path) -> None:
 
 def _export_thread_md(items: list[ScrapedItem], out_dir: Path) -> int:
     roots = build_thread_trees(items)
+    written = 0
+    skipped_orphans = 0
     for root in roots:
+        if not root.is_root:
+            skipped_orphans += 1
+            continue
         author = root.item.author_name or root.item.author_id or "unknown"
-        safe_author = "".join(c if c.isalnum() or c in "-_" else "_" for c in author)
-        filename = f"{safe_author}_{root.item.id}.md"
+        safe_author = _slug_for_filename(author) or "unknown"
+        safe_id = _slug_for_filename(root.item.id) or "post"
+        filename = f"{safe_author}_{safe_id}.md"
         (out_dir / filename).write_text(render_thread_md(root), encoding="utf-8")
-    return len(roots)
+        written += 1
+    if skipped_orphans:
+        console.print(
+            f"[yellow]Skipped {skipped_orphans} orphan reply group(s) "
+            f"(root post not in result set; re-export without --author/--limit "
+            f"filters to include them).[/yellow]"
+        )
+    return written
+
+
+def _slug_for_filename(value: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in value)[:80]
 
 
 def _export_csv(items: list[ScrapedItem], path: Path) -> None:
