@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Thread — Horus{% endblock %}
+{% block content %}
+<style>
+  .thread-back { font-size: .85rem; color: #888; margin-bottom: .75rem; display: inline-block; }
+  .post-card { background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 1.1rem 1.2rem; margin-bottom: 1rem; }
+  .post-card .author { font-weight: 600; color: #fff; }
+  .post-card .meta { font-size: .78rem; color: #777; margin: .25rem 0 .75rem; }
+  .post-card .body { color: #ddd; line-height: 1.55; white-space: pre-wrap; }
+  .post-card .reactions { font-size: .8rem; color: #888; margin-top: .8rem; }
+  .post-card .url { font-size: .75rem; margin-top: .35rem; }
+
+  .replies-header { font-size: .95rem; color: #ccc; margin: 1rem 0 .6rem; }
+  .reply-tree { list-style: none; padding-left: 0; }
+  .reply-tree ul { list-style: none; padding-left: 1.1rem; border-left: 2px solid #2a2a2a; margin-top: .35rem; }
+  .reply-tree li { padding: .55rem 0 .15rem .65rem; }
+  .reply-card { background: #161616; border: 1px solid #242424; border-radius: 6px; padding: .55rem .75rem; }
+  .reply-card .reply-meta { font-size: .72rem; color: #777; margin-bottom: .25rem; }
+  .reply-card .reply-meta .author { color: #b8b8b8; font-weight: 600; }
+  .reply-card .reply-meta .reply-to { color: #7eb8f7; }
+  .reply-card .reply-body { color: #ddd; font-size: .88rem; line-height: 1.5; white-space: pre-wrap; }
+
+  /* Depth-based accent on left border */
+  .reply-tree > ul                         { border-left-color: #2f4d70; }
+  .reply-tree > ul ul                      { border-left-color: #355c80; }
+  .reply-tree > ul ul ul                   { border-left-color: #3c6a90; }
+  .reply-tree > ul ul ul ul                { border-left-color: #427a9f; }
+
+  .empty { color: #666; font-size: .9rem; padding: .5rem 0; }
+</style>
+
+<a class="thread-back" href="/items">← Back to items</a>
+
+{% if root %}
+  {% set post = root.item %}
+  <div class="post-card">
+    <div class="author">@{{ post.author_name or post.author_id or 'unknown' }}</div>
+    <div class="meta">
+      <span class="tag">{{ post.site_id }}</span>
+      {{ post.timestamp.strftime('%Y-%m-%d %H:%M') }}
+    </div>
+    {% if post.text %}
+    <div class="body">{{ post.text }}</div>
+    {% endif %}
+    {% if post.extra.get('media_urls') %}
+    <div class="meta" style="margin-top:.6rem;">
+      {% for url in post.extra.media_urls %}
+        <a href="{{ url }}" target="_blank" rel="noopener">media{{ loop.index }}</a>{% if not loop.last %} · {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+    <div class="url">
+      <a href="{{ post.url }}" target="_blank" rel="noopener">{{ post.url }}</a>
+    </div>
+    {% if post.extra.get('like_count') is not none %}
+    <div class="reactions">
+      ♥ {{ post.extra.like_count }}  ↩ {{ post.extra.get('reply_count', 0) }}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="replies-header">
+    留言 ({{ root.children | length }})
+  </div>
+
+  {% if root.children %}
+    <div class="reply-tree">
+      <ul>
+        {% for child in root.children %}
+          {% include "partials/reply_node.html" %}
+        {% endfor %}
+      </ul>
+    </div>
+  {% else %}
+    <div class="empty">尚無留言</div>
+  {% endif %}
+{% else %}
+  <div class="empty">Thread not found.</div>
+{% endif %}
+
+{% endblock %}
