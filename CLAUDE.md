@@ -25,12 +25,15 @@ src/horus/
     ├── base.py         # SiteAdapter ABC（has_page_mode flag + 3 abstract methods）
     ├── __init__.py     # Registry（register, get_adapter, list_adapters）
     ├── threads.py      # Threads adapter（GraphQL 攔截）
+    ├── twitter.py      # Twitter/X adapter（GraphQL 攔截，anonymous 可用）
     └── web.py          # GenericWebAdapter（任意公開網頁 → Markdown，has_page_mode=True）
 tests/
 ├── conftest.py         # storage fixture（in-memory SQLite）
 ├── test_storage.py
+├── fixtures/twitter/   # 真實 X GraphQL response（parser 測試用）
 └── adapters/
     ├── test_threads_adapter.py
+    ├── test_twitter_adapter.py
     └── test_web_adapter.py
 ```
 
@@ -41,6 +44,9 @@ horus login threads                              # 開 browser 手動登入，�
 horus crawl threads --user @username             # 爬取貼文（增量）
 horus crawl threads --user @username --mode replies  # 爬取回覆
 horus crawl threads --url https://...            # 爬特定 URL
+horus crawl twitter --user @NASA                 # 爬 X 貼文（含置頂，anonymous 可用）
+horus crawl twitter --user @NASA --mode replies  # 爬 X 回覆
+horus crawl twitter --url https://x.com/NASA/status/123  # 爬單一貼文/串
 horus crawl web --url https://example.com        # 爬公開網頁，存 pages 表
 horus crawl web --url https://example.com --output ./pages/   # 同時輸出 .md 檔
 horus crawl web --url-list urls.txt --output ./pages/          # 批次爬取
@@ -113,6 +119,23 @@ uv run horus --help                    # 確認 CLI 可用
 - 自動偵測 posts/replies mode：thread_items 有 1 個 = posts，2+ 個 = replies
 - extra 欄位：`like_count`, `reply_count`, `repost_count`, `media_type`, `media_urls`,
   `is_reply`, `parent_post_id`, `conversation_id`, `reply_to_username`
+
+## Twitter (X) Adapter 說明
+
+- 走 response 攔截（同 Threads，`has_page_mode=False`），攔截 GraphQL `UserTweets` /
+  `UserTweetsAndReplies` / `TweetDetail`，依導航頁面自動觸發
+- **anonymous 可用**：未登入即可爬公開 profile；量大時 `horus login twitter` 存 state
+  較穩（X 對 guest token 限流兇）。`requires_login=False`
+- `--user @name`（posts）/ `--user @name --mode replies` / `--url <status>`；stdin 多 user
+- **不支援 `--with-comments`**（X 無 SSR thread_items 等價物，回覆走 `--mode replies` 或 `--url`）
+- 關鍵解析：author 走新路徑 `core.user_results.result.core`（legacy 已空）；轉推 unwrap
+  `retweeted_status_result` 取內層完整內容（外層 `full_text` 是 `RT @…` 截斷版），id/timestamp
+  保留外層；長文取 `note_tweet`；置頂貼文在 `TimelinePinEntry` instruction
+- extra 欄位：`like_count`, `retweet_count`, `reply_count`, `quote_count`, `bookmark_count`,
+  `view_count`, `media_type`, `media_urls`, `lang`, `is_reply`, `is_retweet`, `retweeted_by`,
+  `is_quote`, `parent_post_id`, `conversation_id`, `reply_to_username`
+- 自串/回覆沿用 `conversation_id`/`parent_post_id`/`is_reply` 慣例，接 `thread_tree` 與前端詳情頁；
+  跨頁回覆層級會壓平（已知限制）
 
 ## GenericWebAdapter（web）說明
 
