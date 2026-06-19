@@ -208,9 +208,18 @@ async def _crawl(
     interrupted = False
     try:
         if adapter_cls.has_http_mode:
-            # Direct HTTP path (no Playwright): DDG etc.
+            # Direct HTTP path (no Playwright): DDG, serper, etc.
             console.print(f"Searching [cyan]{site}[/cyan]...")
-            items = await adapter.fetch_items(**kwargs)
+            # Forward the top-level --limit into http-mode adapters. It lands in the
+            # `limit` local (a Click option), not in kwargs, so http adapters never
+            # saw it. kwargs wins on collision to keep the serve path correct.
+            http_kwargs = {"limit": limit, **kwargs}
+            try:
+                items = await adapter.fetch_items(**http_kwargs)
+            except (ValueError, RuntimeError) as e:
+                console.print(f"[red]{e}[/red]")
+                storage.close()
+                sys.exit(1)
             items = adapter.post_process(items)
             new_count = storage.upsert_items(items)
             total_found = len(items)
