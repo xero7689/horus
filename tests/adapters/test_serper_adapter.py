@@ -50,6 +50,15 @@ def test_parse_zero_results():
     assert items == []
 
 
+def test_parse_rank_falls_back_to_enumeration_index():
+    # organic item without a "position" key → rank = 1-based enumeration index
+    adapter = SerperAdapter()
+    body = {"organic": [{"title": "t", "link": "https://e/1", "snippet": "s"}]}
+    items = adapter.parse_response_json(body, query="q", gl="tw", hl="zh-tw")
+    assert len(items) == 1
+    assert items[0].extra["rank"] == 1
+
+
 def test_serper_registered():
     from horus.adapters import get_adapter
 
@@ -142,4 +151,42 @@ async def test_5xx_retries_once_then_succeeds(monkeypatch):
     adapter = SerperAdapter(transport=httpx.MockTransport(handler))
     items = await adapter.fetch_items(query="q", limit=1)
     assert len(items) == 1
+    assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_429_retry_after_then_succeeds(monkeypatch):
+    # 429 with Retry-After → honored once, retry returns 200 (Retry-After "0" = no real sleep)
+    monkeypatch.setenv("HORUS_SERPER_API_KEY", "k")
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"})
+        return httpx.Response(
+            200,
+            json={"organic": [{"title": "t", "link": "https://e/1", "position": 1}], "credits": 1},
+        )
+
+    adapter = SerperAdapter(transport=httpx.MockTransport(handler))
+    items = await adapter.fetch_items(query="q", limit=1)
+    assert len(items) == 1
+    assert items[0].url == "https://e/1"
+    assert calls["n"] == 2
+
+
+@pytest.mark.asyncio
+async def test_429_persistent_raises_runtime_error(monkeypatch):
+    # 429 on both initial call and the single retry → RuntimeError, exactly 2 calls
+    monkeypatch.setenv("HORUS_SERPER_API_KEY", "k")
+    calls = {"n": 0}
+
+    def handler(request):
+        calls["n"] += 1
+        return httpx.Response(429, headers={"Retry-After": "0"})
+
+    adapter = SerperAdapter(transport=httpx.MockTransport(handler))
+    with pytest.raises(RuntimeError):
+        await adapter.fetch_items(query="q")
     assert calls["n"] == 2
