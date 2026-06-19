@@ -6,7 +6,10 @@ overlap_at_k = set overlap (coverage); rbo = top-weighted rank similarity.
 
 from urllib.parse import parse_qs, unquote, urlsplit, urlunsplit
 
-_TRACKING_PREFIXES = ("utm_", "gclid", "fbclid", "ref", "ref_src")
+# utm_* is a real family prefix; the rest are exact keys (so we don't drop
+# meaningful params like `reference`/`refresh` that merely start with "ref").
+_TRACKING_PREFIXES = ("utm_",)
+_TRACKING_EXACT = frozenset({"gclid", "fbclid", "ref", "ref_src"})
 
 
 def normalize_url(url: str) -> str:
@@ -33,7 +36,7 @@ def normalize_url(url: str) -> str:
         if not pair:
             continue
         key = pair.split("=", 1)[0]
-        if any(key.startswith(p) for p in _TRACKING_PREFIXES):
+        if key in _TRACKING_EXACT or any(key.startswith(p) for p in _TRACKING_PREFIXES):
             continue
         kept.append(pair)
     query = "&".join(sorted(kept))

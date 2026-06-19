@@ -13,6 +13,13 @@ def test_normalize_keeps_meaningful_query_params():
     assert normalize_url("https://example.com/p?id=1&utm_source=x") == "example.com/p?id=1"
 
 
+def test_normalize_drops_ref_exactly_not_ref_prefixed():
+    # "ref" is an exact tracking key; "reference"/"refresh" merely start with it and are kept
+    assert normalize_url("https://example.com/p?ref=abc") == "example.com/p"
+    assert normalize_url("https://example.com/p?reference=9") == "example.com/p?reference=9"
+    assert normalize_url("https://example.com/p?refresh=1") == "example.com/p?refresh=1"
+
+
 def test_normalize_unwraps_google_redirect():
     # manual browser SERP copies often yield google redirect wrappers
     assert (
