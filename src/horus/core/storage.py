@@ -313,6 +313,32 @@ class HorusStorage:
         row = self._conn.execute("SELECT * FROM pages WHERE url = ?", (url,)).fetchone()
         return _row_to_page(row) if row else None
 
+    def get_item(self, site_id: str, item_id: str) -> ScrapedItem | None:
+        row = self._conn.execute(
+            "SELECT * FROM items WHERE site_id = ? AND id = ?", (site_id, item_id)
+        ).fetchone()
+        return _row_to_item(row) if row else None
+
+    def get_thread_items(self, site_id: str, conversation_id: str) -> list[ScrapedItem]:
+        """Return root + all replies belonging to a conversation.
+
+        Matches the root (id = conversation_id) and any item whose
+        ``extra.conversation_id`` equals ``conversation_id``.
+        """
+        rows = self._conn.execute(
+            """
+            SELECT * FROM items
+            WHERE site_id = ?
+              AND (
+                id = ?
+                OR json_extract(extra, '$.conversation_id') = ?
+              )
+            ORDER BY timestamp ASC
+            """,
+            (site_id, conversation_id, conversation_id),
+        ).fetchall()
+        return [_row_to_item(row) for row in rows]
+
     def delete_item(self, site_id: str, item_id: str) -> bool:
         """Delete an item by (site_id, item_id). Returns True if found and deleted."""
         cur = self._conn.execute(

@@ -17,6 +17,7 @@ src/horus/
 ├── cli.py              # Click CLI（login, crawl, list-sites, show, search, pages, export, stats）
 ├── config.py           # Settings（HORUS_* env vars，~/.horus/ 路徑管理）
 ├── models.py           # ScrapedItem, ScrapedPage, CrawlResult, SiteAdapterConfig
+├── serp_eval.py        # 純函式 SERP 比對指標（normalize_url, overlap_at_k, rbo）
 ├── core/
 │   ├── browser.py      # BaseBrowser（Playwright 生命週期，save_login_state）
 │   ├── scraper.py      # BaseScraper（scrape：scroll + response intercept；scrape_page：HTML → Markdown）
@@ -25,12 +26,16 @@ src/horus/
     ├── base.py         # SiteAdapter ABC（has_page_mode flag + 3 abstract methods）
     ├── __init__.py     # Registry（register, get_adapter, list_adapters）
     ├── threads.py      # Threads adapter（GraphQL 攔截）
-    └── web.py          # GenericWebAdapter（任意公開網頁 → Markdown，has_page_mode=True）
+    ├── twitter.py      # Twitter/X adapter（GraphQL 攔截，anonymous 可用）
+    ├── web.py          # GenericWebAdapter（任意公開網頁 → Markdown，has_page_mode=True）
+    └── serper.py       # Serper adapter（Google Search via httpx，has_http_mode=True）
 tests/
 ├── conftest.py         # storage fixture（in-memory SQLite）
 ├── test_storage.py
+├── fixtures/twitter/   # 真實 X GraphQL response（parser 測試用）
 └── adapters/
     ├── test_threads_adapter.py
+    ├── test_twitter_adapter.py
     └── test_web_adapter.py
 ```
 
@@ -41,9 +46,14 @@ horus login threads                              # 開 browser 手動登入，�
 horus crawl threads --user @username             # 爬取貼文（增量）
 horus crawl threads --user @username --mode replies  # 爬取回覆
 horus crawl threads --url https://...            # 爬特定 URL
+horus crawl twitter --user @NASA                 # 爬 X 貼文（含置頂，anonymous 可用）
+horus crawl twitter --user @NASA --mode replies  # 爬 X 回覆
+horus crawl twitter --url https://x.com/NASA/status/123  # 爬單一貼文/串
 horus crawl web --url https://example.com        # 爬公開網頁，存 pages 表
 horus crawl web --url https://example.com --output ./pages/   # 同時輸出 .md 檔
 horus crawl web --url-list urls.txt --output ./pages/          # 批次爬取
+horus crawl serper --query "fastapi tutorial" --limit 10   # 1 credit/查（Serper API，需金鑰）
+horus crawl serper --query "..." --limit 30 --gl tw --hl zh-tw   # >10 筆 = 2 credits/查
 horus list-sites                                 # 列出可用 adapters
 horus show --site threads --limit 20             # 顯示已儲存 items
 horus pages --site web --limit 10                # 顯示已儲存 pages
@@ -95,6 +105,7 @@ HORUS_SCROLL_DELAY_MIN=3.0
 HORUS_SCROLL_DELAY_MAX=8.0
 HORUS_REQUEST_JITTER=2.0
 HORUS_MAX_PAGES=50
+HORUS_SERPER_API_KEY=...        # Serper.dev Google Search API key（env-only）
 ```
 
 ## 開發指令
@@ -114,6 +125,23 @@ uv run horus --help                    # 確認 CLI 可用
 - extra 欄位：`like_count`, `reply_count`, `repost_count`, `media_type`, `media_urls`,
   `is_reply`, `parent_post_id`, `conversation_id`, `reply_to_username`
 
+## Twitter (X) Adapter 說明
+
+- 走 response 攔截（同 Threads，`has_page_mode=False`），攔截 GraphQL `UserTweets` /
+  `UserTweetsAndReplies` / `TweetDetail`，依導航頁面自動觸發
+- **anonymous 可用**：未登入即可爬公開 profile；量大時 `horus login twitter` 存 state
+  較穩（X 對 guest token 限流兇）。`requires_login=False`
+- `--user @name`（posts）/ `--user @name --mode replies` / `--url <status>`；stdin 多 user
+- **不支援 `--with-comments`**（X 無 SSR thread_items 等價物，回覆走 `--mode replies` 或 `--url`）
+- 關鍵解析：author 走新路徑 `core.user_results.result.core`（legacy 已空）；轉推 unwrap
+  `retweeted_status_result` 取內層完整內容（外層 `full_text` 是 `RT @…` 截斷版），id/timestamp
+  保留外層；長文取 `note_tweet`；置頂貼文在 `TimelinePinEntry` instruction
+- extra 欄位：`like_count`, `retweet_count`, `reply_count`, `quote_count`, `bookmark_count`,
+  `view_count`, `media_type`, `media_urls`, `lang`, `is_reply`, `is_retweet`, `retweeted_by`,
+  `is_quote`, `parent_post_id`, `conversation_id`, `reply_to_username`
+- 自串/回覆沿用 `conversation_id`/`parent_post_id`/`is_reply` 慣例，接 `thread_tree` 與前端詳情頁；
+  跨頁回覆層級會壓平（已知限制）
+
 ## GenericWebAdapter（web）說明
 
 - `has_page_mode = True`，不攔截 HTTP responses，改用 `scrape_page()` 抓完整 HTML
@@ -121,3 +149,20 @@ uv run horus --help                    # 確認 CLI 可用
 - 結果存 `pages` 表（以 URL 為 primary key，upsert）
 - `--output DIR` 同時將每頁寫成 `{slug}.md` 到指定目錄
 - `horus export --format markdown` 可事後從 DB 批次匯出 .md 檔
+
+## Serper Adapter 說明
+
+- 走 Serper.dev 的 Google Search API 取得真・Google 搜尋結果，`has_http_mode = True`
+  （用 `httpx` POST，**不需要 Playwright / browser**）
+- **金鑰 env-only**：`HORUS_SERPER_API_KEY`（放 `.env` 或 export），**絕不經 CLI flag**
+  （避免落入 `crawl_log` / serve API）。缺金鑰時錯誤訊息明確指向該 env var
+- Endpoint：`POST https://google.serper.dev/search`，header `X-API-KEY`
+- `--query`（必填，亦支援 stdin 多 query 一行一個）/ `--gl`（國別，預設 `tw`）/
+  `--hl`（語系，預設 `zh-tw`）。預設 locale 對齊台灣瀏覽器 Google，避免回美國英文結果
+- **credit 計費**：`num<=10` = 1 credit、`num` 11–100 = 2 credits。⚠️ crawl 的 top-level
+  `--limit` 預設是 **50**，裸跑 `crawl serper --query X` 會請求 `num=50` → **每查吃 2 credits**。
+  要省成本請帶 `--limit 10`（adapter 在 `num>10` 時也印 stderr 警告）
+- **單次請求不跨頁**：拿單次 `num`（10–100），>100 直接 clamp 到 100
+- extra 欄位：`query`, `rank`, `snippet`, `date`, `gl`, `hl`
+- 結果品質可用 `src/horus/serp_eval.py`（overlap@k + RBO + `normalize_url`，純函式有單元測試）
+  配合 `scripts/validate_serper.py`（gitignored 本機工具）比對「瀏覽器 Google vs serper」

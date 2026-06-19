@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     base_dir: Path = Path.home() / ".horus"
     db_path: Path | None = None
 
+    # Serper.dev Google Search API (env-only; never via CLI flag)
+    serper_api_key: str | None = None
+
     # Browser behaviour
     headless: bool = True
     scroll_delay_min: float = 3.0

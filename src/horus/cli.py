@@ -15,6 +15,7 @@ from horus.config import Settings
 from horus.core.browser import BaseBrowser
 from horus.core.scraper import BaseScraper
 from horus.core.storage import HorusStorage
+from horus.core.thread_tree import build_thread_trees, render_thread_md
 from horus.models import ScrapedItem, ScrapedPage
 
 console = Console(stderr=True)
@@ -207,9 +208,18 @@ async def _crawl(
     interrupted = False
     try:
         if adapter_cls.has_http_mode:
-            # Direct HTTP path (no Playwright): DDG etc.
+            # Direct HTTP path (no Playwright): DDG, serper, etc.
             console.print(f"Searching [cyan]{site}[/cyan]...")
-            items = await adapter.fetch_items(**kwargs)
+            # Forward the top-level --limit into http-mode adapters. It lands in the
+            # `limit` local (a Click option), not in kwargs, so http adapters never
+            # saw it. kwargs wins on collision to keep the serve path correct.
+            http_kwargs = {"limit": limit, **kwargs}
+            try:
+                items = await adapter.fetch_items(**http_kwargs)
+            except (ValueError, RuntimeError) as e:
+                console.print(f"[red]{e}[/red]")
+                storage.close()
+                sys.exit(1)
             items = adapter.post_process(items)
             new_count = storage.upsert_items(items)
             total_found = len(items)
@@ -443,16 +453,23 @@ def pages(site: str | None, limit: int) -> None:
 @click.option("--site", default=None, help="Filter by site ID")
 @click.option("--author", "-a", default=None, help="Filter by author")
 @click.option("--url", default=None, help="Filter by exact URL (for page-mode exports)")
-@click.option("--format", "fmt", type=click.Choice(["json", "csv", "markdown"]), default="json")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["json", "csv", "markdown", "thread-md"]),
+    default="json",
+)
 @click.option("--output", "-o", required=True, help="Output file path (or directory for markdown)")
 @click.option("--limit", "-n", default=10000, type=int, help="Max items to export")
 def export(
     site: str | None, author: str | None, url: str | None, fmt: str, output: str, limit: int
 ) -> None:  # noqa: E501
-    """Export stored items to JSON, CSV, or Markdown.
+    """Export stored items to JSON, CSV, Markdown, or thread-md.
 
-    For --format markdown, --output should be a directory.
-    Pages from page-mode adapters (e.g. 'web') will be exported as .md files.
+    For --format markdown, --output should be a directory; pages from
+    page-mode adapters (e.g. 'web') are exported as .md files.
+    For --format thread-md, --output should be a directory; each root
+    post and its replies are rendered as a single threaded .md file.
     """
     storage = _get_storage()
     output_path = Path(output)
@@ -469,6 +486,12 @@ def export(
     items = storage.get_items(site_id=site, author_name=author, limit=limit)
     storage.close()
 
+    if fmt == "thread-md":
+        output_path.mkdir(parents=True, exist_ok=True)
+        count = _export_thread_md(items, output_path)
+        console.print(f"[green]Exported {count} threads to {output_path}[/green]")
+        return
+
     if fmt == "json":
         _export_json(items, output_path)
     else:
@@ -480,6 +503,33 @@ def export(
 def _export_json(items: list[ScrapedItem], path: Path) -> None:
     data = [item.model_dump(mode="json") for item in items]
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def _export_thread_md(items: list[ScrapedItem], out_dir: Path) -> int:
+    roots = build_thread_trees(items)
+    written = 0
+    skipped_orphans = 0
+    for root in roots:
+        if not root.is_root:
+            skipped_orphans += 1
+            continue
+        author = root.item.author_name or root.item.author_id or "unknown"
+        safe_author = _slug_for_filename(author) or "unknown"
+        safe_id = _slug_for_filename(root.item.id) or "post"
+        filename = f"{safe_author}_{safe_id}.md"
+        (out_dir / filename).write_text(render_thread_md(root), encoding="utf-8")
+        written += 1
+    if skipped_orphans:
+        console.print(
+            f"[yellow]Skipped {skipped_orphans} orphan reply group(s) "
+            f"(root post not in result set; re-export without --author/--limit "
+            f"filters to include them).[/yellow]"
+        )
+    return written
+
+
+def _slug_for_filename(value: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in value)[:80]
 
 
 def _export_csv(items: list[ScrapedItem], path: Path) -> None:

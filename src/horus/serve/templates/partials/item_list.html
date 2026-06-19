@@ -2,7 +2,8 @@
   {% for item in items %}
   <div class="card">
     <div class="card-title">
-      <a href="{{ item.url }}" target="_blank" rel="noopener">{{ item.text[:120] if item.text else item.url }}</a>
+      <a href="/items/{{ item.site_id }}/{{ item.id }}">{{ item.text[:120] if item.text else item.url }}</a>
+      <a href="{{ item.url }}" target="_blank" rel="noopener" title="Open original" style="font-size:.75rem;margin-left:.4rem;color:#7eb8f7;">↗</a>
     </div>
     <div class="card-meta">
       <span class="tag">{{ item.site_id }}</span>
