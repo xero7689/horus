@@ -811,7 +811,9 @@ def normalize_url(url: str) -> str:
             continue
         kept.append(pair)
     query = "&".join(sorted(kept))
-    return urlunsplit(("", host, path, query, ""))
+    # urlunsplit prepends "//" for an empty scheme + non-empty netloc; strip it
+    # so the canonical form is host/path?query (not //host/path?query).
+    return urlunsplit(("", host, path, query, "")).removeprefix("//")
 
 
 def overlap_at_k(list1: list[str], list2: list[str], k: int = 10) -> float:
