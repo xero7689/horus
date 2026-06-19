@@ -133,7 +133,11 @@ class CrawlerManager:
                 job.log.append(msg)
                 job.broadcast("log", {"message": msg})
 
-                items = await adapter.fetch_items(**job.kwargs)
+                # Forward the serve UI's `limit` into http-mode adapters (mirrors the
+                # CLI fix). job.kwargs wins on collision so an explicit per-job limit
+                # takes precedence.
+                http_kwargs = {"limit": limit, **job.kwargs}
+                items = await adapter.fetch_items(**http_kwargs)
                 items = adapter.post_process(items)
                 new_count = storage.upsert_items(items)
                 job.items_found = len(items)
