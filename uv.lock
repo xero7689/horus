@@ -252,6 +252,7 @@ source = { editable = "." }
 dependencies = [
     { name = "click" },
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "jinja2" },
     { name = "markdownify" },
     { name = "playwright" },
@@ -264,7 +265,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "bandit" },
-    { name = "httpx" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -277,6 +277,7 @@ dev = [
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "fastapi", specifier = ">=0.135.1" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "markdownify", specifier = ">=1.2.2" },
     { name = "playwright", specifier = ">=1.49" },
@@ -289,7 +290,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "bandit", specifier = ">=1.9.4" },
-    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pre-commit", specifier = ">=4.5.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
