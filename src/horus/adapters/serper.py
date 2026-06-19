@@ -9,6 +9,7 @@ Usage:
     horus crawl serper --query "python crawler" --gl us --hl en
 """
 
+import asyncio
 import hashlib
 import sys
 from collections.abc import Callable
@@ -177,7 +178,21 @@ class SerperAdapter(SiteAdapter):
     ) -> dict[str, Any]:
         payload = {"q": query, "gl": gl, "hl": hl, "num": num}
         headers = {"X-API-KEY": api_key, "Content-Type": "application/json"}
+
         resp = await client.post(_SERPER_URL, json=payload, headers=headers)
-        # error handling added in Task 6
+
+        if resp.status_code in (401, 403):
+            raise ValueError(f"Invalid Serper API key or access denied (HTTP {resp.status_code})")
+        if resp.status_code == 429:
+            retry_after = resp.headers.get("Retry-After")
+            if retry_after is not None:
+                await asyncio.sleep(min(float(retry_after), 10))
+                resp = await client.post(_SERPER_URL, json=payload, headers=headers)
+            if resp.status_code == 429:
+                raise RuntimeError("Serper rate limited (429)")
+        if resp.status_code >= 500:
+            await asyncio.sleep(1)
+            resp = await client.post(_SERPER_URL, json=payload, headers=headers)
+
         resp.raise_for_status()
         return resp.json()  # type: ignore[no-any-return]
