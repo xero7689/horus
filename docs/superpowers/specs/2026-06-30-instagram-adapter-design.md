@@ -105,14 +105,17 @@ profile 貼文（`xdt_api__v1__feed__user_timeline`）、留言（`edge_media_to
               await scraper.scrape_comments(url=post.url, post_pk=post.id, ...)
   ```
   （確切變數/收尾以 cli.py 既有寫法為準；上面是分支結構規格。）
-- 導航貼文頁時頁面自動發 `/api/v1/media/<id>/comments/`，`scrape()` 攔截 → `parse_response` 解析。**首批留言在頁面載入即攔到**（實測 `has_more_comments=False`）。
+- 導航貼文頁時頁面自動發 `/api/v1/media/<id>/comments/`，`scrape()` 攔截 → `parse_response` 解析。
+  - **留言的 `scrape()` 刻意不傳 `since=`**：留言有自己的 `created_at`，不可套貼文增量 cutoff（否則會默默丟掉舊留言）。
+  - ⚠️ **要先驗證的執行假設**：「導航到 `/p/<code>/` 會在載入時自動發 comments XHR」是 recon harness 觀察到的行為，但尚未在 `scrape()` 的 `page.goto` 路徑上實證。**實作第一步就先驗這條**（首批留言能否攔到）；不成立則需在貼文頁觸發留言載入（點開留言區/滾動）再攔。
 - **core/scraper.py 不需新介面**：`scrape()` / `scrape_comments()` 皆不動，IG 只是走既有 `scrape()` 那條。
 > 設計理由（SOLID/YAGNI）：一個旗標宣告留言策略 + cli 明確二分支；threads 與 instagram 互不影響，也不為「拿得到的 post_pk」發明新介面。
 
 ### 3) Item 對應（IG 專屬解析，**不照搬 threads `_parse_item`**）
 threads 的 `_parse_item`（threads.py:84-103）hard-code `site_id="threads"`、threads.net URL，且讀 IG **沒有**的 `text_post_app_info` → 不可照搬；只有 `_extract_media_urls` 結構相同可複用。
 - **貼文 `_parse_item(node)`**：`id=pk`、`site_id="instagram"`、`url=https://www.instagram.com/p/<code>/`、`text=caption.text`、`author_id=user.pk`、`author_name=user.username`、`timestamp=taken_at`；extra：`like_count`/`comment_count`（**直接取 node**，非 text_post_app_info）、`media_type`（複用 `_MEDIA_TYPE_MAP`，IG 用 1/2/8）、`media_urls`（**複用** threads `_extract_media_urls` 邏輯）、`is_reply=False`、`parent_post_id=None`、`conversation_id=None`。
-- **留言 `_parse_comment(comment)`**：`id=comment pk`、`site_id="instagram"`、`url`=母貼文 URL、`text=text`、`author_id=user.pk`、`author_name=user.username`、`timestamp=created_at`；extra：`comment_like_count`/`child_comment_count`、`is_reply=True`、`conversation_id=parent_post_id=media_id`、`media_type=None`、`media_urls=[]`。
+- **留言 `_parse_comment(comment)`**：`id=comment pk`、`site_id="instagram"`、`text=text`、`author_id=user.pk`、`author_name=user.username`、`timestamp=created_at`；extra：`comment_like_count`/`child_comment_count`、`is_reply=True`、`conversation_id=parent_post_id=media_id`、`media_type=None`、`media_urls=[]`。
+  - **`url` 推導（重要，parse 時拿不到 shortcode）**：留言 body 只有 `media_id`、**沒有** `code`/permalink，故 `_parse_comment` 在 parse 時無法建出 `/p/<code>/`。決策：`_parse_comment` 先設 `url=""`（佔位），由 **cli.py 的逐貼攔截 loop 回填** `item.url = post.url`（該 loop 持有正在爬留言的 `post`，其 `post.url` 已是 `/p/<code>/`）。回填時亦可確認 `item.extra["parent_post_id"] == post.id`。`ScrapedItem.url` 為必填字串，`""` 為合法佔位、回填後即正確。
 
 ### 4) 註冊
 `src/horus/adapters/__init__.py`：`from horus.adapters.instagram import InstagramAdapter` + `register(InstagramAdapter)`。`horus list-sites` 應出現 `instagram`。
@@ -141,6 +144,7 @@ horus crawl instagram --url https://www.instagram.com/p/<code>/ --with-comments
   - `user_timeline.json`（來自 `resp_005`）→ profile 貼文 parser 測試
   - `media_info.json`（來自 `resp_007`）→ `--url` 單貼 parser 測試
   - `media_comments.json`（來自 `resp_008`）→ 留言 parser 測試（驗證 `media_id` 綁回貼文）
+  - ⚠️ **recon 檔有包一層 wrapper**（`{url, status, data_keys, body}`）。製作 fixture 時要取出 **`.body`** 存檔，否則 `parse_response` 的 dispatch（找頂層 `data`/`items`/`comments`）會全部 miss。
 - **fixtures 消毒（強制，非選用）**：
   - 移除 `xdt_viewer`、`organic_tracking_token`、`*_tracking_token` 等 viewer/token 欄位。
   - **第三方留言者 PII 必須去識別**：`user` 的 `username`/`full_name`/`pk`/`fbid_v2`/`profile_pic_url` 一律換成假值、留言 `text` 換成中性測試字串。只留 2–3 則。**不可** commit 真實第三方帳號與留言內容。
