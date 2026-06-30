@@ -42,18 +42,25 @@ Author: Peter
   ```
 - **解析複用**：`threads._parse_item` / `_extract_media_urls` 的邏輯幾乎可直接搬（同 Meta 結構）。
 
+### 單貼 media info（`--url` 模式的貼文來源）
+- **Endpoint**：`GET https://www.instagram.com/api/v1/media/<media_id>/info/`
+- **Body**：`items[]`，`items[0]` 的欄位 = 與 timeline node **同一組**（`pk/code/caption/taken_at/like_count/comment_count/media_type/user/image_versions2/carousel_media`，已實測確認）。
+- → `--url <貼文>` 模式的貼文從這裡解析（profile 模式從 timeline graphql；兩者共用同一個 item builder）。
+
 ### 頂層留言
 - **Endpoint**：`GET https://www.instagram.com/api/v1/media/<media_id>/comments/?can_support_threading=true&...`
 - **Body 關鍵欄位**：
   ```
   comments[]                    # 頂層留言陣列
   comment_count: int
-  has_more_comments: bool
+  has_more_comments: bool       # 實測首批為 False（單批已涵蓋）
   next_min_id: str (JSON-encoded cursor)
+  caption.media_id: str         # = 貼文 pk
   ```
 - **`comments[]` 每則**：
   ```
   pk: str
+  media_id: str                 # = 貼文 pk（★ 每則都有，直接綁回貼文，不需外部傳 post_pk）
   text: str
   created_at: int               # epoch
   comment_like_count: int
@@ -69,29 +76,46 @@ profile 貼文（`xdt_api__v1__feed__user_timeline`）、留言（`edge_media_to
 
 `InstagramAdapter(SiteAdapter)`，`requires_login=True`，走 `scrape()` 攔截路徑（`has_page_mode=False`、`has_http_mode=False`）。
 
-### 1) 貼文攔截
-- `get_response_filter()`：`"graphql" in url` 且 body `data` 含鍵 `xdt_api__v1__feed__user_timeline_graphql_connection`。
-- `parse_response(body)`：取該 connection 的 `edges[].node` → `_parse_item` → `ScrapedItem`。
+### 1) 攔截過濾與解析（貼文 + 留言共用一條 `parse_response`）
+- `get_response_filter()` **雙重過濾（URL pattern + body 結構，遵循 CLAUDE.md 慣例）**，比對三種 response：
+  - **timeline 貼文**：`"graphql" in url` 且 body `data` 含鍵 `xdt_api__v1__feed__user_timeline_graphql_connection`
+  - **單貼 media info**：url 含 `/api/v1/media/` 且 `/info/`，body 含 `items`
+  - **頂層留言**：url 含 `/api/v1/media/` 且 `/comments/`，body 含 `comments` + `comment_count`
+- `parse_response(body)` 依 body 結構 dispatch：
+  - timeline connection → `edges[].node` → `_parse_item`（貼文）
+  - media info → `items[]` → `_parse_item`（貼文）
+  - comments → `comments[]` → `_parse_comment`（留言，用每則 body 的 `media_id` 綁回貼文）
 - `get_urls(**kwargs)`：`--user @name` → `https://www.instagram.com/<name>/`；`--url` → 原樣；支援 stdin 多 user（同 threads）。
 
-### 2) 留言攔截（唯一需要動 core）
-留言是 XHR JSON（非 HTML），且需把留言綁回 post_pk（`parse_response` 只拿得到 body、拿不到 post_pk）。因此擴充 core 一條「攔截式留言」路徑，**平行於** threads 現有的 HTML `CommentParser`：
+### 2) 留言：走既有 `scrape()` 攔截，core 改動極小
+`media_id`（=貼文 pk）就在**每則留言的 body** 裡，留言可由標準 `parse_response` 直接解析並綁回貼文，**不需要新的 comment-parser 介面**。故放棄「攔截式 comment parser」構想（`scrape_comments_via_intercept` / `get_comment_response_filter` / `get_intercept_comment_parser` 都不做）。改為最小改動：
 
-- **core/scraper.py**：
-  - 既有 `CommentParser`（HTML）保留不動。
-  - 新增「攔截式留言」能力：`scrape_comments_via_intercept(url, post_pk, comment_filter, comment_parser, state_path)` —— 導航到貼文頁、攔截符合 `comment_filter(url, body)` 的 response、把 **body + post_pk** 交給 `comment_parser(body, *, post_pk) -> list[ScrapedItem]`。
-- **adapters/base.py**：`SiteAdapter` 新增宣告留言策略的鉤子（預設 None / HTML）：
-  - `get_comment_response_filter() -> Callable[[str, dict], bool] | None`
-  - `get_intercept_comment_parser() -> Callable[..., list[ScrapedItem]] | None`
-  - 兩者皆非 None → CLI 的 `--with-comments` flow 走攔截路徑；否則沿用既有 HTML `get_comment_parser()`。
-- **cli.py `--with-comments` flow**：依 adapter 宣告的策略二選一（HTML vs intercept）。threads 走 HTML（不動），instagram 走 intercept。
-- **留言 → ScrapedItem**：`id=comment pk`、`is_reply=True`、`conversation_id=parent_post_id=post_pk`、extra 存 `comment_like_count` / `child_comment_count` / `media_type=None`。
+- **adapters/base.py**：`SiteAdapter` 新增 ClassVar 旗標 `comments_via_interception: ClassVar[bool] = False`（預設 False = 沿用既有 HTML 留言路徑）。`InstagramAdapter` 設 `True`。
+- **cli.py `--with-comments` flow**（明確分支，threads 原封不動）。現況：`comment_parser = adapter.get_comment_parser() if with_comments else None`，並對 `crawled_top_level` 逐貼呼叫 `scraper.scrape_comments(url=post.url, post_pk=post.id, parser=comment_parser, ...)`（cli.py:300-325）。改為：
+  ```python
+  if with_comments and crawled_top_level:
+      if getattr(adapter_cls, "comments_via_interception", False):
+          # instagram：逐貼導航 post.url，用同一個 scrape() 攔截（filter 會命中 comments XHR）
+          for post in crawled_top_level:
+              await scraper.scrape(post.url, adapter.get_response_filter(),
+                                   adapter.parse_response, state_path, on_batch=...)
+      elif adapter.get_comment_parser():
+          # threads：既有 HTML 路徑，不動
+          for post in crawled_top_level:
+              await scraper.scrape_comments(url=post.url, post_pk=post.id, ...)
+  ```
+  （確切變數/收尾以 cli.py 既有寫法為準；上面是分支結構規格。）
+- 導航貼文頁時頁面自動發 `/api/v1/media/<id>/comments/`，`scrape()` 攔截 → `parse_response` 解析。**首批留言在頁面載入即攔到**（實測 `has_more_comments=False`）。
+- **core/scraper.py 不需新介面**：`scrape()` / `scrape_comments()` 皆不動，IG 只是走既有 `scrape()` 那條。
+> 設計理由（SOLID/YAGNI）：一個旗標宣告留言策略 + cli 明確二分支；threads 與 instagram 互不影響，也不為「拿得到的 post_pk」發明新介面。
 
-> 設計理由（SOLID）：adapter 宣告自己的留言策略，core 提供兩條可選機制，threads/instagram 各取所需、互不影響（OCP + 策略模式）。
+### 3) Item 對應（IG 專屬解析，**不照搬 threads `_parse_item`**）
+threads 的 `_parse_item`（threads.py:84-103）hard-code `site_id="threads"`、threads.net URL，且讀 IG **沒有**的 `text_post_app_info` → 不可照搬；只有 `_extract_media_urls` 結構相同可複用。
+- **貼文 `_parse_item(node)`**：`id=pk`、`site_id="instagram"`、`url=https://www.instagram.com/p/<code>/`、`text=caption.text`、`author_id=user.pk`、`author_name=user.username`、`timestamp=taken_at`；extra：`like_count`/`comment_count`（**直接取 node**，非 text_post_app_info）、`media_type`（複用 `_MEDIA_TYPE_MAP`，IG 用 1/2/8）、`media_urls`（**複用** threads `_extract_media_urls` 邏輯）、`is_reply=False`、`parent_post_id=None`、`conversation_id=None`。
+- **留言 `_parse_comment(comment)`**：`id=comment pk`、`site_id="instagram"`、`url`=母貼文 URL、`text=text`、`author_id=user.pk`、`author_name=user.username`、`timestamp=created_at`；extra：`comment_like_count`/`child_comment_count`、`is_reply=True`、`conversation_id=parent_post_id=media_id`、`media_type=None`、`media_urls=[]`。
 
-### 3) ScrapedItem 對應
-- 貼文 `id=pk`、`url=https://www.instagram.com/p/<code>/`、`text=caption.text`、`author_id=user.pk`、`author_name=user.username`、`timestamp=taken_at`。
-- extra：`like_count / comment_count / media_type / media_urls / is_reply=False / parent_post_id=None / conversation_id=None`。
+### 4) 註冊
+`src/horus/adapters/__init__.py`：`from horus.adapters.instagram import InstagramAdapter` + `register(InstagramAdapter)`。`horus list-sites` 應出現 `instagram`。
 
 ## CLI / 行為
 
@@ -102,7 +126,8 @@ horus crawl instagram --user @name --with-comments # 連頂層留言
 horus crawl instagram --url https://www.instagram.com/p/<code>/ --with-comments
 ```
 - 增量：沿用 `get_latest_timestamp`（同其他 adapter）。
-- 限流：沿用 `HORUS_SCROLL_DELAY_*` / `HORUS_REQUEST_JITTER`；留言滾動保守，只抓首批 + 滾動載入的幾批（不追 `min_id` 分頁到底）。
+- 限流：沿用 `HORUS_SCROLL_DELAY_*` / `HORUS_REQUEST_JITTER`。
+- **留言分頁（已知限制）**：MVP **只保證首批留言**（頁面載入即攔到，實測該貼 `has_more_comments=False`）。「滾動貼文頁是否會再觸發 `min_id` 分頁的 comments XHR」**尚未驗證**——`scrape()` 的滾動是為 feed 設計，套到貼文頁的留言載入是假設、非實測。若日後要抓滿，再另開 backlog 處理 cursor 分頁。
 
 ## 錯誤處理 / 防禦
 
@@ -113,10 +138,13 @@ horus crawl instagram --url https://www.instagram.com/p/<code>/ --with-comments
 ## 測試（沿用 twitter adapter 慣例）
 
 - 用 recon 抓到的**真實 response** 當 fixtures，置於 `tests/fixtures/instagram/`：
-  - `user_timeline.json`（來自 `resp_005`）→ 貼文 parser 測試
-  - `media_comments.json`（來自 `resp_008`）→ 留言 parser 測試
-- **fixtures 需消毒**：移除 `xdt_viewer`、`organic_tracking_token` 等 viewer/token 欄位，留言只留少數幾則、用去識別或公開帳號樣本（避免 commit 私人/敏感資料）。
-- 純 parser 單元測試（無 Playwright、無 network）；core 的攔截留言路徑用既有 scraper 測試慣例。
+  - `user_timeline.json`（來自 `resp_005`）→ profile 貼文 parser 測試
+  - `media_info.json`（來自 `resp_007`）→ `--url` 單貼 parser 測試
+  - `media_comments.json`（來自 `resp_008`）→ 留言 parser 測試（驗證 `media_id` 綁回貼文）
+- **fixtures 消毒（強制，非選用）**：
+  - 移除 `xdt_viewer`、`organic_tracking_token`、`*_tracking_token` 等 viewer/token 欄位。
+  - **第三方留言者 PII 必須去識別**：`user` 的 `username`/`full_name`/`pk`/`fbid_v2`/`profile_pic_url` 一律換成假值、留言 `text` 換成中性測試字串。只留 2–3 則。**不可** commit 真實第三方帳號與留言內容。
+- 純 parser 單元測試（無 Playwright、無 network）。`parse_response` 的三向 dispatch（timeline / media_info / comments）各一組測試；threads 既有測試須維持綠（回歸）。
 
 ## 風險
 
