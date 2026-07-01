@@ -26,3 +26,16 @@ def test_parse_timeline_posts() -> None:
     assert p.extra["is_reply"] is False
     assert "like_count" in p.extra and "comment_count" in p.extra
     assert "media_urls" in p.extra
+
+
+# ---------------------------------------------------------------------------
+# Task 4: single-post (media/info) dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_parse_media_info_single_post() -> None:
+    items = InstagramAdapter().parse_response(_load("media_info.json"))
+    assert len(items) >= 1
+    assert items[0].site_id == "instagram"
+    assert items[0].url.startswith("https://www.instagram.com/p/")
+    assert items[0].extra["is_reply"] is False
