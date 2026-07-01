@@ -95,8 +95,11 @@ class InstagramAdapter(SiteAdapter):
             return [it for c in comments if (it := _parse_comment(c or {}))]
 
         # 3. Single-post info (/api/v1/media/<id>/info/)
+        # Comments are already handled by branch 2 (returns on any list `comments`),
+        # so no cross-branch guard is needed here — a stray non-list `comments` key
+        # must not suppress parsing the post.
         items = body.get("items")
-        if isinstance(items, list) and items and "comments" not in body:
+        if isinstance(items, list) and items:
             return [it for n in items if (it := _parse_item(n or {}))]
 
         return []

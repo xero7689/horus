@@ -58,6 +58,18 @@ def test_parse_comments() -> None:
     assert "comment_like_count" in c.extra
 
 
+def test_comment_media_id_matches_post_pk() -> None:
+    # Load-bearing invariant: cli.py backfill attributes comments to a post via
+    # `comment.extra["parent_post_id"] == post.id`. This locks that the fixtures'
+    # comment media_id equals the media_info post pk, guarding against parser/fixture drift.
+    a = InstagramAdapter()
+    post = a.parse_response(_load("media_info.json"))[0]
+    comments = a.parse_response(_load("media_comments.json"))
+    assert comments
+    for c in comments:
+        assert c.extra["parent_post_id"] == post.id
+
+
 def test_parse_empty_and_malformed() -> None:
     a = InstagramAdapter()
     assert a.parse_response({}) == []
