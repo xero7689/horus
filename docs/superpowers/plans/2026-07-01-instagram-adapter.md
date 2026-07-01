@@ -6,6 +6,9 @@
 
 **Architecture:** 鏡像 `threads`/`twitter` 的 `scrape()` 攔截模式。`parse_response` 三向 dispatch（timeline graphql 貼文 / `media/info` 單貼 / `media/comments` 留言）。留言因 body 內含 `media_id` 可直接綁回貼文，**不新增 core 介面**：只加一個 `comments_via_interception` ClassVar 旗標 + cli.py 明確分支。共用的 Meta 媒體解析抽成 `adapters/_meta.py`。
 
+> **留言階段隔離（codex review 修正，關鍵設計）**：IG 的**單一** `get_response_filter` 會同時命中 timeline / media_info / comments 三種 response（維持 base API 簽章不變，不引入 `mode` 參數）。但導航貼文頁時 comments XHR 會**自動**觸發，使得主爬階段的 `parse_response` 也吐出留言（`url=""` 未回填）。因此**主爬的 `on_batch` 對 `comments_via_interception` adapter 一律丟棄 `is_reply` 項目**（不寫 DB、不 `_emit`），留言**只**經由 `--with-comments` 迴圈回填 URL 後才持久化。此設計同時涵蓋「沒帶 `--with-comments` 時留言不該落地」的情況。
+> **留言歸屬校驗**：recon 實測 comment `media_id`（如 `3921942437490559575`，裸 pk 無 `_ownerid` 後綴）**等於**貼文 `pk`；故 backfill 迴圈以 `comment.extra["parent_post_id"] == post.id` 過濾，杜絕跨貼文誤掛。
+
 **Tech Stack:** Python 3.13, Playwright（攔截）, pydantic, Click, pytest（純 parser 測試用消毒後真實 fixtures，CI 無 network）。
 
 **Spec:** `docs/superpowers/specs/2026-06-30-instagram-adapter-design.md`（含 recon ground truth）。
@@ -39,13 +42,23 @@
 
 - [ ] **Step 1: 取出 `.body` 並消毒**
 
-對三個檔，取 `.body` 當 fixture 根；然後消毒（**強制**）：
-- 移除 `xdt_viewer`、任何 `*_tracking_token`、`organic_tracking_token`。
-- timeline / media_info：保留 1–2 個貼文 node（含一個 carousel `media_type=8` 與一個單圖/影片），其餘 edges/items 刪除以縮小。
-- comments：**只留 2–3 則**；每則的 `user.{username,full_name,pk,fbid_v2,profile_pic_url}` 換成假值（如 `test_user_1` / pk `"1001"`）、`text` 換成中性字串（如 `"留言測試一"`）。保留 `media_id`、`pk`、`created_at`、`comment_like_count`、`child_comment_count` 結構。
+對三個檔，取 `.body` 當 fixture 根；然後消毒（**強制**）。
+
+> ⚠️ **codex review 修正（finding 5）**：消毒**不可只洗留言 user**。timeline / media_info 的 node 內含大量巢狀真人資料（`user`、`owner`、`coauthor_producers[]`、`usertags`、`caption.text`、各種 `profile_pic_url`、`*_tracking_token`），**全部**要遞迴清乾淨。
+
+**遞迴消毒規則（對三檔一致套用，用一次性 python 腳本遞迴走訪 dict/list）：**
+- **刪除**任何 key 名含 `tracking_token`、`viewer`、`xdt_viewer`、`fbid`、`profile_pic`、`hd_profile_pic`、`friendship_status`、`account_badges` 的節點。
+- 任何 `user`/`owner`/`coauthor_producers[]` 物件：只保留 `pk`（改假值，如 `"1001"`/`"1002"`）與 `username`（改 `test_user_N`）、`full_name`（改 `Test User N`）；其餘欄位刪除。
+- 清空 `usertags`（設為 `{"in": []}` 或刪除）。
+- 任何 `caption.text` / 貼文文字 / `text`：換成中性字串（如 `"貼文測試一"` / `"留言測試一"`）。
+- 媒體 URL（`image_versions2` / `video_versions` / `carousel_media[].*`）：可保留結構但把實際 CDN URL 換成 `https://example.com/media/N.jpg` 之類假值（**保留 parser 需要的欄位形狀**：`candidates[].url`、`video_versions[].url`、`carousel_media[]`）。
+- **縮小**：timeline / media_info 保留 1–2 個貼文 node（**含一個 carousel `media_type=8` 與一個單圖/影片**）；comments 只留 2–3 則。
+- **保留 parser 依賴的欄位**：貼文 `pk`/`code`/`taken_at`/`media_type`/`like_count`/`comment_count`；留言 `pk`/`media_id`/`created_at`/`comment_like_count`/`child_comment_count`。
 - 確認 fixture 根層有 dispatch 需要的鍵：timeline→`data.xdt_api__v1__feed__user_timeline_graphql_connection`；media_info→`items`；comments→`comments`+`comment_count`。
 
-可用一次性 python 腳本（不需保留）完成。
+- [ ] **Step 1b: 消毒後自動掃描殘留 PII（gate）**
+
+Run（一次性腳本即可）：遞迴 grep fixture JSON，確認**不存在** `tracking_token` / `profile_pic` / `fbid` / `viewer` 等 key，且沒有殘留真實 username（比對 recon 原檔的真實帳號名不得出現在 fixture）。任一命中 → 回 Step 1 補洗。
 
 - [ ] **Step 2: 驗證 fixtures 可被 json 載入且結構正確**
 
@@ -75,10 +88,12 @@ git commit -m "test: add sanitized instagram response fixtures (timeline/media_i
 
 threads.py 刪除這兩段本地定義，改 `from horus.adapters._meta import _MEDIA_TYPE_MAP, _extract_media_urls`。
 
-- [ ] **Step 3: 確認 threads 測試與 lint 全綠（無回歸）**
+- [ ] **Step 3: 確認全測試與 lint 全綠（無回歸）**
 
-Run: `uv run pytest tests/ -k "threads" -v && uv run ruff check src/ && uv run ty check src/`
+Run: `uv run pytest tests/ -q && uv run ruff check src/ && uv run ty check src/`
 Expected: PASS（純移動，行為不變）。
+
+> codex review 修正（finding 8）：`adapters/__init__.py` 會 import 所有 adapter，搬移共用 helper 可能牽動非 threads 路徑，故跑**全量** `pytest tests/`，不只 `-k threads`。
 
 - [ ] **Step 4: Commit**
 
@@ -309,7 +324,31 @@ def _parse_comment(c: dict[str, Any]) -> ScrapedItem | None:
 ```
 > 注意 dispatch 順序：comments body 也可能含 `caption`，但**沒有頂層 `items`**；timeline 有 `data`。三者頂層鍵互斥（`data` / `items` / `comments`），順序：先 `data`(timeline) → 再 `comments` → 再 `items`(media_info)。請依此排列避免誤判。
 
-- [ ] **Step 4: 跑測試確認通過**；**Step 5: Commit** `feat: instagram top-level comment parsing (media_id linkage)`
+- [ ] **Step 4: 加負向 / shape-drift 測試（codex review finding 3）**
+
+Happy path fixtures 之外，補下列不需新 fixture 的邊界測試（就地建構 dict 或從 fixture 淺拷貝後刪欄位）：
+```python
+def test_parse_empty_and_malformed():
+    a = InstagramAdapter()
+    # 空 / 缺頂層鍵 → 回空 list，不 raise
+    assert a.parse_response({}) == []
+    assert a.parse_response({"data": {}}) == []
+    assert a.parse_response({"items": []}) == []
+    assert a.parse_response({"comments": []}) == []
+    # 缺 taken_at 的貼文 node → 被 _parse_item 跳過（回 None 濾除）
+    assert a.parse_response({"items": [{"pk": "1", "code": "X"}]}) == []
+    # 缺 media_id 的留言 → parent_post_id/conversation_id 為空字串（可被 cli 過濾掉，不誤掛）
+    out = a.parse_response({"comments": [{"pk": "9", "created_at": 1700000000}]})
+    assert out and out[0].extra["parent_post_id"] == ""
+    # 缺 created_at 的留言 → 跳過
+    assert a.parse_response({"comments": [{"pk": "9"}]}) == []
+    # 缺 code 的貼文 → url 仍為合法字串（不 raise），caller 可判斷
+    out = a.parse_response({"items": [{"pk": "1", "taken_at": 1700000000}]})
+    assert out and out[0].url == "https://www.instagram.com/p//"
+```
+> 這些也回頭保護 `_parse_item`/`_parse_comment` 的 `None` 跳過語意，並確保「缺 `media_id` 的留言不會被 backfill 誤掛到某貼文」（Task 8 的 `parent_post_id == post.id` 過濾會擋掉空字串）。
+
+- [ ] **Step 5: 跑測試確認通過**；**Step 6: Commit** `feat: instagram top-level comment parsing (media_id linkage) + edge-case tests`
 
 ---
 
@@ -379,9 +418,15 @@ Expected: FAIL
         raise ValueError("instagram adapter requires --user or --url")
 
     def get_crawl_options(self) -> list[dict[str, Any]]:
-        return [{"name": "--user", "help": "Instagram username (e.g. @nasa)",
-                 "required": False, "default": None}]
+        # codex review finding 7: 單貼 --url 也在 scope 內，metadata 要一併宣告
+        return [
+            {"name": "--user", "help": "Instagram username (e.g. @nasa)",
+             "required": False, "default": None},
+            {"name": "--url", "help": "Single Instagram post URL",
+             "required": False, "default": None},
+        ]
 ```
+測試補一條 `test_crawl_options_expose_user_and_url`：`{o["name"] for o in InstagramAdapter().get_crawl_options()} == {"--user", "--url"}`。
 `__init__.py`：`from horus.adapters.instagram import InstagramAdapter` + `register(InstagramAdapter)`。
 
 - [ ] **Step 4: 跑測試 + list-sites**
@@ -422,19 +467,48 @@ Expected: PASS
 - [ ] **Step 1: 寫失敗測試（CliRunner + mock scraper）**
 
 ```python
-# tests/adapters/test_instagram_cli.py — 驗證 with_comments 時 IG 走 scrape() 而非 scrape_comments，
-# 且回傳的留言 url 被回填成 post.url。
-# 用 unittest.mock 패치 BaseScraper.scrape / scrape_comments，
-# 讓 main crawl 回一篇 post（is_reply False），comment scrape 回一則 is_reply True url=""。
-# 斷言：scrape_comments 未被呼叫；upsert 的留言 url == post.url。
+# tests/adapters/test_instagram_cli.py
+# 用 unittest.mock 패치 BaseScraper.scrape / scrape_comments（對齊 test_serper_cli.py 的
+# CliRunner + AsyncMock 慣例），mock storage.upsert_items 收集實際落地的 items。
 ```
-（實作測試時對齊現有 `tests/adapters/test_serper_cli.py` 的 CliRunner + AsyncMock 慣例；mock `BaseScraper.scrape` 以受控資料回傳。）
+需涵蓋下列案例（斷言明確）：
+1. **`test_ig_with_comments_uses_interception`**：主爬回一篇 post(is_reply False)，comment scrape 回一則 is_reply True url=""。斷言：`scrape_comments` **未**被呼叫；落地留言 `url == post.url`。
+2. **`test_ig_mixed_page_defers_comments`（codex finding 1+4，關鍵）**：主爬 `on_batch` 收到的**同一批**含 `[post(is_reply False), comment(is_reply True, url="")]`。斷言：主爬階段**不**持久化 / `_emit` 該 comment（DB 落地此階段只有 post）；comment 只在後續 `--with-comments` 迴圈回填 `url` 後才落地。
+3. **`test_ig_backfill_rejects_foreign_comment`（codex finding 2）**：comment scrape 回兩則，一則 `parent_post_id == post.id`、一則 `parent_post_id == "other"`。斷言：只有前者被落地且 `url == post.url`；後者被丟棄（不誤掛）。
+4. **`test_ig_no_with_comments_drops_comments`（codex finding 1）**：`--url <post>` **不帶** `--with-comments`，主爬 batch 含 comment。斷言：留言完全不落地、不 `_emit`（comment loop 未跑）。
 
 - [ ] **Step 2: 跑測試確認失敗**
 
-- [ ] **Step 3: 改 cli.py 留言區（`:301-325`）為二分支**
+改動有**兩處**：(A) 主爬 `on_batch` 加守衛丟棄攔截式留言；(B) 留言區改二分支 + 歸屬過濾。
 
-把現有 comment 區改為：
+**(A) `on_batch`（cli.py:274-286）加守衛（codex finding 1）**
+
+在 `on_batch` 內、`adapter.post_process(batch)` **之前**插入：
+```python
+                    def on_batch(batch: list[ScrapedItem]) -> None:
+                        nonlocal total_found, total_new
+                        # comments_via_interception：導航貼文頁會自動觸發 comments XHR，
+                        # 留言(url="")會混進主爬 batch。此處一律丟棄 is_reply，改由
+                        # --with-comments 迴圈回填 URL 後才落地（沒帶 --with-comments 時亦不落地）。
+                        if getattr(adapter_cls, "comments_via_interception", False):
+                            batch = [p for p in batch if not p.extra.get("is_reply", False)]
+                        if not batch:
+                            return
+                        batch = adapter.post_process(batch)
+                        new_count = storage.upsert_items(batch)
+                        total_found += len(batch)
+                        total_new += new_count
+                        for item in batch:
+                            _emit(item)
+                        if with_comments:
+                            crawled_top_level.extend(
+                                p for p in batch if not p.extra.get("is_reply", False)
+                            )
+```
+> `adapter_cls` 為當前 adapter 類別（cli 既有變數；若名稱不同，取 `type(adapter)`）。守衛**不以 `with_comments` 為條件** —— 沒帶 `--with-comments` 也要擋掉留言落地。
+
+**(B) 留言區（cli.py:301-325）改二分支 + 歸屬過濾（codex finding 2）**
+
 ```python
                     if with_comments and crawled_top_level:
                         console.print(f"Fetching comments for {len(crawled_top_level)} posts...")
@@ -447,9 +521,15 @@ Expected: PASS
                                         post.url, adapter.get_response_filter(),
                                         adapter.parse_response, state_path,
                                     )  # no since= : comments aren't filtered by post cutoff
-                                    comment_items = [c for c in raw if c.extra.get("is_reply")]
-                                    for c in comment_items:
+                                    comment_items = []
+                                    for c in raw:
+                                        if not c.extra.get("is_reply"):
+                                            continue
+                                        # 歸屬校驗：只收 media_id == 本貼 pk 的留言，杜絕跨貼文誤掛
+                                        if c.extra.get("parent_post_id") != post.id:
+                                            continue
                                         c.url = post.url  # backfill (comment body lacks shortcode)
+                                        comment_items.append(c)
                                 elif comment_parser:
                                     comment_items = await scraper.scrape_comments(
                                         url=post.url, post_pk=post.id,
@@ -518,7 +598,10 @@ Expected：多篇貼文 + 各自頂層留言。
 - [ ] **Step 1: CLAUDE.md**
   - 「常用指令」加 `horus login instagram` / `horus crawl instagram --user @name [--with-comments]` / `--url`。
   - 「專案結構」adapters 加 `instagram.py`、`_meta.py`。
-  - 新增「Instagram Adapter 說明」段：攔截三 endpoint、`requires_login`、只頂層留言、媒體只存 URL、`comments_via_interception` 機制、已知限制（留言只保證首批、帳號封號風險）。
+  - 新增「Instagram Adapter 說明」段：攔截三 endpoint、`requires_login`、只頂層留言、媒體只存 URL、`comments_via_interception` 機制（主爬 `on_batch` 丟棄攔截式留言、留言經 `--with-comments` 迴圈以 `parent_post_id == post.id` 歸屬後回填 URL 落地）、已知限制：
+    - 留言只保證**首批**（分頁 cursor 未做，記 backlog）。
+    - **carousel 影片 URL 未抓**（codex finding 9）：`_extract_media_urls` 對 carousel 只取圖片 `candidates`，carousel 內的 `video_versions` 未展開（MVP 決策，非 recon 不符）。單則影片貼文的 `video_versions` 有抓。
+    - 帳號封號風險（建議分身帳號）。
 
 - [ ] **Step 2: horus-scraping skill** 加 instagram 段（與 threads 並列：登入、`--user`/`--url`/`--with-comments`、頂層留言、限制）。CLAUDE.md 規範要求 adapter 變更必更新此 skill。
 
@@ -538,9 +621,11 @@ Expected: 全綠、含 instagram。
 - [ ] `horus list-sites` 顯示 `instagram`
 - [ ] `--user @name` 取得貼文存 DB（增量），`--url <post>` 單貼可用
 - [ ] `--with-comments` 抓到頂層留言，`is_reply`/`conversation_id`/`parent_post_id`/`url` 正確
+- [ ] **主爬階段不落地攔截式留言**（`url=""` 不進 DB / 不 `_emit`）；沒帶 `--with-comments` 時留言完全不落地（codex finding 1）
+- [ ] backfill 以 `parent_post_id == post.id` 歸屬，跨貼文留言不誤掛（codex finding 2）
 - [ ] **Step 0 手動 gate 通過**：實機確認首批留言可攔
 - [ ] threads HTML 留言路徑不受影響（回歸綠）
-- [ ] parser 測試用消毒後真實 fixtures（無第三方 PII、無 token），CI 無 network
+- [ ] parser 測試用消毒後真實 fixtures（**遞迴清除巢狀第三方 PII**、無 token），並含負向/shape-drift 案例，CI 無 network
 - [ ] `_meta.py` 抽離後 threads 行為不變
 - [ ] CLAUDE.md + horus-scraping skill 同步更新
 - [ ] `uv run pytest` / `ruff check` / `ty check` 全綠
