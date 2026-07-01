@@ -108,3 +108,8 @@ def test_registered() -> None:
     from horus.adapters import get_adapter
 
     assert get_adapter("instagram").site_id == "instagram"
+
+
+def test_comments_via_interception_flag() -> None:
+    # load-bearing: cli.py routes --with-comments through interception based on this
+    assert InstagramAdapter.comments_via_interception is True

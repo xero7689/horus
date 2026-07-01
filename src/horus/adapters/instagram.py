@@ -80,6 +80,7 @@ class InstagramAdapter(SiteAdapter):
     login_url = "https://www.instagram.com/accounts/login/"
     requires_login = True
     description = "Scrape Instagram posts + top-level comments via GraphQL/XHR interception"
+    comments_via_interception = True
 
     def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
         # 1. Timeline (GraphQL connection)
