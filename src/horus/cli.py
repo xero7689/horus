@@ -273,6 +273,14 @@ async def _crawl(
 
                     def on_batch(batch: list[ScrapedItem]) -> None:
                         nonlocal total_found, total_new
+                        # comments_via_interception: navigating a post page auto-triggers the
+                        # comments XHR, so replies (url="") leak into the primary batch. Drop
+                        # them here; they are persisted only via the --with-comments backfill
+                        # loop (and never persisted at all without --with-comments).
+                        if getattr(adapter_cls, "comments_via_interception", False):
+                            batch = [p for p in batch if not p.extra.get("is_reply", False)]
+                        if not batch:
+                            return
                         batch = adapter.post_process(batch)
                         new_count = storage.upsert_items(batch)
                         total_found += len(batch)
@@ -298,18 +306,37 @@ async def _crawl(
                         )
                         storage.log_crawl(site, url, total_found, total_new, started_at)
 
-                    # Fetch comments for posts collected during this crawl
-                    comment_parser = adapter.get_comment_parser() if with_comments else None
-                    if comment_parser and crawled_top_level:
+                    if with_comments and crawled_top_level:
                         console.print(f"Fetching comments for {len(crawled_top_level)} posts...")
+                        use_intercept = getattr(adapter_cls, "comments_via_interception", False)
+                        comment_parser = None if use_intercept else adapter.get_comment_parser()
                         for post in crawled_top_level:
                             try:
-                                comment_items = await scraper.scrape_comments(
-                                    url=post.url,
-                                    post_pk=post.id,
-                                    parser=comment_parser,
-                                    state_path=state_path,
-                                )
+                                if use_intercept:
+                                    raw = await scraper.scrape(
+                                        post.url,
+                                        adapter.get_response_filter(),
+                                        adapter.parse_response,
+                                        state_path,
+                                    )  # no since= : comments aren't filtered by post cutoff
+                                    comment_items = []
+                                    for c in raw:
+                                        if not c.extra.get("is_reply"):
+                                            continue
+                                        # attribution: only keep comments for this post
+                                        if c.extra.get("parent_post_id") != post.id:
+                                            continue
+                                        c.url = post.url  # backfill (comment body lacks shortcode)
+                                        comment_items.append(c)
+                                elif comment_parser:
+                                    comment_items = await scraper.scrape_comments(
+                                        url=post.url,
+                                        post_pk=post.id,
+                                        parser=comment_parser,
+                                        state_path=state_path,
+                                    )
+                                else:
+                                    comment_items = []
                                 if comment_items:
                                     new_count = storage.upsert_items(comment_items)
                                     total_found += len(comment_items)
