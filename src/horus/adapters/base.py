@@ -29,6 +29,8 @@ class SiteAdapter(ABC):
     description: ClassVar[str] = ""
     has_page_mode: ClassVar[bool] = False  # True = use scrape_page() instead of scrape()
     has_http_mode: ClassVar[bool] = False  # True = use fetch_items(), no Playwright needed
+    # True = --with-comments uses scrape() interception instead of scrape_comments() HTML parsing
+    comments_via_interception: ClassVar[bool] = False
 
     @abstractmethod
     def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
