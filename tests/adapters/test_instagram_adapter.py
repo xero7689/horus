@@ -74,3 +74,37 @@ def test_parse_empty_and_malformed() -> None:
     assert a.parse_response({"comments": [{"pk": "9"}]}) == []  # missing created_at -> skipped
     out = a.parse_response({"items": [{"pk": "1", "taken_at": 1700000000}]})  # missing code
     assert out and out[0].url == "https://www.instagram.com/p//"
+
+
+# ---------------------------------------------------------------------------
+# Task 6: filter (3-way) + get_urls + options + registration
+# ---------------------------------------------------------------------------
+
+
+def test_filter_matches_three_endpoints() -> None:
+    f = InstagramAdapter().get_response_filter()
+    assert f("https://www.instagram.com/graphql/query", _load("user_timeline.json"))
+    assert f("https://www.instagram.com/api/v1/media/123/info/", _load("media_info.json"))
+    assert f(
+        "https://www.instagram.com/api/v1/media/123/comments/?x=1",
+        _load("media_comments.json"),
+    )
+    assert not f("https://www.instagram.com/api/v1/other/", {"foo": 1})
+
+
+def test_get_urls_user_and_url() -> None:
+    a = InstagramAdapter()
+    assert a.get_urls(user="@nasa") == ["https://www.instagram.com/nasa/"]
+    assert a.get_urls(url="https://www.instagram.com/p/ABC/") == [
+        "https://www.instagram.com/p/ABC/"
+    ]
+
+
+def test_crawl_options_expose_user_and_url() -> None:
+    assert {o["name"] for o in InstagramAdapter().get_crawl_options()} == {"--user", "--url"}
+
+
+def test_registered() -> None:
+    from horus.adapters import get_adapter
+
+    assert get_adapter("instagram").site_id == "instagram"
