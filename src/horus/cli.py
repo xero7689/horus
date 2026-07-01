@@ -265,6 +265,7 @@ async def _crawl(
                         since = storage.get_latest_timestamp(site)
 
                     with_comments = kwargs.get("with_comments") == "true"
+                    use_intercept: bool = getattr(adapter_cls, "comments_via_interception", False)
                     # Populated in on_batch when with_comments is True
                     crawled_top_level: list[ScrapedItem] = []
 
@@ -277,7 +278,7 @@ async def _crawl(
                         # comments XHR, so replies (url="") leak into the primary batch. Drop
                         # them here; they are persisted only via the --with-comments backfill
                         # loop (and never persisted at all without --with-comments).
-                        if getattr(adapter_cls, "comments_via_interception", False):
+                        if use_intercept:
                             batch = [p for p in batch if not p.extra.get("is_reply", False)]
                         if not batch:
                             return
@@ -287,7 +288,9 @@ async def _crawl(
                         total_new += new_count
                         for item in batch:
                             _emit(item)
-                        # Collect top-level posts for comment fetch
+                        # Collect top-level posts for comment fetch. The is_reply filter is
+                        # still needed for the non-interception (HTML parser) path, where the
+                        # guard above is skipped and replies may reach this batch.
                         if with_comments:
                             crawled_top_level.extend(
                                 p for p in batch if not p.extra.get("is_reply", False)
@@ -308,7 +311,6 @@ async def _crawl(
 
                     if with_comments and crawled_top_level:
                         console.print(f"Fetching comments for {len(crawled_top_level)} posts...")
-                        use_intercept = getattr(adapter_cls, "comments_via_interception", False)
                         comment_parser = None if use_intercept else adapter.get_comment_parser()
                         for post in crawled_top_level:
                             try:

@@ -7,7 +7,6 @@ Covers:
 4. Without --with-comments: comments leaking into primary batch are silently dropped (test 4)
 """
 
-import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -127,6 +126,11 @@ def _build_scraper_mock(
     ``primary_batch`` and returns the same list.  Subsequent calls
     (comment backfill) return ``backfill_items`` without calling
     ``on_batch``.
+
+    NOTE: the call-count dispatch (1st call = primary, rest = backfill)
+    only holds for single-primary-URL scenarios. All tests here crawl a
+    single ``--url``, so exactly one primary scrape precedes the backfill
+    loop; multi-URL crawls would break this ordering assumption.
     """
     call_count = 0
     _backfill = backfill_items or []
@@ -167,53 +171,17 @@ def _build_scraper_mock(
 def _make_recording_upsert(
     captured: list[list[ScrapedItem]],
 ) -> Callable[[HorusStorage, list[ScrapedItem]], int]:
-    """Return an upsert_items replacement that records batches and persists for real."""
+    """Return a call-through upsert_items wrapper that records each batch.
+
+    Snapshots the items at call time (Pydantic objects are mutable, so we copy
+    to avoid aliasing later mutations) then delegates to the real method, so the
+    DB stays consistent and the SQL stays in one place.
+    """
+    _orig_upsert = HorusStorage.upsert_items
 
     def _upsert(self: HorusStorage, items: list[ScrapedItem]) -> int:
-        # Deep-copy before mutation so assertions see pre-backfill state
         captured.append([ScrapedItem(**i.model_dump()) for i in items])
-        # Replicate real persistence so the DB is consistent
-        new_count = 0
-        for item in items:
-            existing = self._conn.execute(
-                "SELECT 1 FROM items WHERE site_id = ? AND id = ?",
-                (item.site_id, item.id),
-            ).fetchone()
-            if existing:
-                self._conn.execute(
-                    """UPDATE items
-                    SET text = ?, url = ?, author_id = ?, author_name = ?,
-                        extra = ?, fetched_at = datetime('now')
-                    WHERE site_id = ? AND id = ?""",
-                    (
-                        item.text,
-                        item.url,
-                        item.author_id,
-                        item.author_name,
-                        json.dumps(item.extra),
-                        item.site_id,
-                        item.id,
-                    ),
-                )
-            else:
-                self._conn.execute(
-                    """INSERT INTO items
-                    (id, site_id, url, text, author_id, author_name, timestamp, extra)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        item.id,
-                        item.site_id,
-                        item.url,
-                        item.text,
-                        item.author_id,
-                        item.author_name,
-                        item.timestamp.isoformat(),
-                        json.dumps(item.extra),
-                    ),
-                )
-                new_count += 1
-        self._conn.commit()
-        return new_count
+        return _orig_upsert(self, items)
 
     return _upsert
 
