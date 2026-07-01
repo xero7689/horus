@@ -1,0 +1,222 @@
+{
+  "data": {
+    "xdt_api__v1__feed__user_timeline_graphql_connection": {
+      "edges": [
+        {
+          "node": {
+            "code": "DZ91gm-gccb",
+            "pk": "3926529787476166427",
+            "id": "3926529787476166427_2959383208",
+            "caption": {
+              "has_translation": null,
+              "created_at": 1782315664,
+              "pk": "18164855728444253",
+              "text": "貼文測試1"
+            },
+            "caption_is_edited": true,
+            "taken_at": 1782298803,
+            "is_dash_eligible": null,
+            "number_of_qualities": null,
+            "video_dash_manifest": null,
+            "image_versions2": {
+              "candidates": [
+                {
+                  "url": "https://example.com/media/img_1.jpg",
+                  "height": 1350,
+                  "width": 1080
+                },
+                {
+                  "url": "https://example.com/media/img_2.jpg",
+                  "height": 600,
+                  "width": 480
+                }
+              ]
+            },
+            "sharing_friction_info": {
+              "bloks_app_url": null,
+              "should_have_sharing_friction": false
+            },
+            "is_paid_partnership": false,
+            "original_height": 3100,
+            "original_width": 2480,
+            "user": {
+              "pk": "2959383208",
+              "username": "test_user_1",
+              "full_name": "Test User 1"
+            },
+            "coauthor_producers": [
+              {
+                "pk": "11362360231",
+                "username": "test_user_2",
+                "full_name": "Test User 2"
+              }
+            ],
+            "comment_count": 1,
+            "like_and_view_counts_disabled": false,
+            "like_count": 141,
+            "view_count": null,
+            "can_reshare": null,
+            "product_type": "carousel_container",
+            "media_type": 8,
+            "usertags": {
+              "in": []
+            },
+            "carousel_parent_id": null,
+            "carousel_media_count": 2,
+            "carousel_media": [
+              {
+                "id": "3926223213339705692_2959383208",
+                "pk": "3926223213339705692",
+                "is_dash_eligible": null,
+                "video_dash_manifest": null,
+                "media_type": 1,
+                "original_height": 3100,
+                "original_width": 2480,
+                "usertags": {
+                  "in": []
+                },
+                "image_versions2": {
+                  "candidates": [
+                    {
+                      "url": "https://example.com/media/img_1.jpg",
+                      "height": 1350,
+                      "width": 1080
+                    },
+                    {
+                      "url": "https://example.com/media/img_2.jpg",
+                      "height": 600,
+                      "width": 480
+                    }
+                  ]
+                },
+                "carousel_parent_id": "3926529787476166427_2959383208",
+                "code": null,
+                "number_of_qualities": null,
+                "product_type": "carousel_item",
+                "carousel_media": null,
+                "taken_at": 1782298803,
+                "has_liked": null,
+                "like_count": null,
+                "has_audio": null
+              },
+              {
+                "id": "3926223213331309835_2959383208",
+                "pk": "3926223213331309835",
+                "is_dash_eligible": null,
+                "video_dash_manifest": null,
+                "media_type": 1,
+                "original_height": 3100,
+                "original_width": 2480,
+                "usertags": {
+                  "in": []
+                },
+                "image_versions2": {
+                  "candidates": [
+                    {
+                      "url": "https://example.com/media/img_1.jpg",
+                      "height": 1350,
+                      "width": 1080
+                    },
+                    {
+                      "url": "https://example.com/media/img_2.jpg",
+                      "height": 600,
+                      "width": 480
+                    }
+                  ]
+                },
+                "carousel_parent_id": "3926529787476166427_2959383208",
+                "code": null,
+                "number_of_qualities": null,
+                "product_type": "carousel_item",
+                "carousel_media": null,
+                "taken_at": 1782298803,
+                "has_liked": null,
+                "like_count": null,
+                "has_audio": null
+              }
+            ],
+            "has_audio": null,
+            "is_seen": null,
+            "media_repost_count": 4,
+            "owner_id": {
+              "pk": "2959383208",
+              "id": "2959383208"
+            },
+            "__typename": "XDTMediaDict"
+          },
+          "cursor": ""
+        },
+        {
+          "node": {
+            "code": "DZtid4YJ4pX",
+            "pk": "3921942437490559575",
+            "id": "3921942437490559575_11362360231",
+            "caption": {
+              "has_translation": true,
+              "created_at": 1782488731,
+              "pk": "18212544823336685",
+              "text": "貼文測試2"
+            },
+            "caption_is_edited": true,
+            "taken_at": 1781863232,
+            "is_dash_eligible": null,
+            "number_of_qualities": null,
+            "video_dash_manifest": null,
+            "image_versions2": {
+              "candidates": [
+                {
+                  "url": "https://example.com/media/img_1.jpg",
+                  "height": 1798,
+                  "width": 1440
+                },
+                {
+                  "url": "https://example.com/media/img_2.jpg",
+                  "height": 599,
+                  "width": 480
+                }
+              ]
+            },
+            "sharing_friction_info": {
+              "bloks_app_url": null,
+              "should_have_sharing_friction": false
+            },
+            "is_paid_partnership": false,
+            "original_height": 1798,
+            "original_width": 1440,
+            "user": {
+              "pk": "11362360231",
+              "username": "test_user_2",
+              "full_name": "Test User 2"
+            },
+            "coauthor_producers": [],
+            "comment_count": 82,
+            "like_and_view_counts_disabled": false,
+            "like_count": 150,
+            "view_count": null,
+            "can_reshare": null,
+            "product_type": "feed",
+            "media_type": 1,
+            "usertags": {
+              "in": []
+            },
+            "carousel_parent_id": null,
+            "carousel_media_count": null,
+            "has_audio": null,
+            "is_seen": null,
+            "media_repost_count": 5,
+            "owner_id": {
+              "pk": "11362360231",
+              "id": "11362360231"
+            },
+            "__typename": "XDTMediaDict"
+          },
+          "cursor": ""
+        }
+      ],
+      "page_info": {
+        "has_next_page": false,
+        "end_cursor": null
+      }
+    }
+  }
+}
