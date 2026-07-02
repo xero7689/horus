@@ -137,6 +137,11 @@ uv run horus --help                    # 確認 CLI 可用
 
 - 攔截 GraphQL responses（URL 含 `graphql` 且 body 含 `mediaData`）
 - 自動偵測 posts/replies mode：thread_items 有 1 個 = posts，2+ 個 = replies
+- **`--url` 單貼走 SSR-JSON**（同 IG 模式）：threads 貼文頁把 thread inline 成 SSR
+  `thread_items` array、不 fire mediaData XHR。`is_post_url()` match `/@user/post/<code>`，
+  `extract_inline_items()` 用 `_extract_thread_items_arrays` 取第一個 array（貼文所在 thread）
+  合成 mediaData 形狀，`parse_response` 原樣處理（單貼=posts mode、中段回覆=replies mode 帶連結）
+- `--with-comments` 留言走 `parse_comments_from_html`（同一套 SSR array 解析，跳過第一個 array）
 - extra 欄位：`like_count`, `reply_count`, `repost_count`, `media_type`, `media_urls`,
   `is_reply`, `parent_post_id`, `conversation_id`, `reply_to_username`
 
