@@ -1,10 +1,11 @@
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from horus.adapters import list_adapters
+from horus.core.dates import parse_since
 from horus.core.storage import HorusStorage
 from horus.core.thread_tree import build_thread_trees
 from horus.serve.deps import get_storage, get_templates
@@ -31,7 +32,7 @@ async def list_items(
     since_dt: datetime | None = None
     if since:
         try:
-            since_dt = datetime.fromisoformat(since).replace(tzinfo=UTC)
+            since_dt = parse_since(since)
         except ValueError:
             pass
 

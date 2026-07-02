@@ -13,6 +13,7 @@ from rich.table import Table
 from horus.adapters import get_adapter, list_adapters
 from horus.config import Settings
 from horus.core.browser import BaseBrowser
+from horus.core.dates import parse_since
 from horus.core.scraper import BaseScraper
 from horus.core.storage import HorusStorage
 from horus.core.thread_tree import build_thread_trees, render_thread_md
@@ -32,10 +33,8 @@ def _get_storage(settings: Settings | None = None) -> HorusStorage:
 
 
 def _parse_since(since_str: str | None) -> datetime | None:
-    if not since_str:
-        return None
     try:
-        return datetime.fromisoformat(since_str).replace(tzinfo=UTC)
+        return parse_since(since_str)
     except ValueError:
         raise click.BadParameter(f"Invalid date format: '{since_str}'. Use YYYY-MM-DD or ISO 8601.")
 

@@ -12,6 +12,7 @@ from typing import Any
 
 from horus.adapters import get_adapter
 from horus.config import Settings
+from horus.core.dates import parse_since
 from horus.core.scraper import BaseScraper
 from horus.core.storage import HorusStorage
 from horus.models import ScrapedItem
@@ -176,12 +177,10 @@ class CrawlerManager:
                 urls = adapter.get_urls(**job.kwargs)
                 since_dt = None
                 if since:
-                    from datetime import datetime as dt
-
                     try:
-                        since_dt = dt.fromisoformat(since).replace(tzinfo=UTC)
+                        since_dt = parse_since(since)
                     except ValueError:
-                        pass
+                        pass  # serve keeps silent-fallback semantics (documented divergence)
                 if since_dt is None:
                     since_dt = storage.get_latest_timestamp(job.site)
 
