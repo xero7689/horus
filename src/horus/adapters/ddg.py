@@ -8,8 +8,6 @@ Usage:
     horus crawl ddg --query "python crawler" --limit 10
 """
 
-import hashlib
-import sys
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -18,6 +16,7 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
+from horus.adapters._io import read_stdin_lines, stable_item_id
 from horus.adapters.base import SiteAdapter
 from horus.models import ScrapedItem
 
@@ -31,12 +30,6 @@ _HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.5",
 }
-
-
-def _make_item_id(url: str, query: str) -> str:
-    """Stable ID: SHA-1 of (url, query) truncated to 16 hex chars."""
-    digest = hashlib.sha1(f"{url}|{query}".encode()).hexdigest()  # nosec B324
-    return digest[:16]
 
 
 class DuckDuckGoAdapter(SiteAdapter):
@@ -73,13 +66,9 @@ class DuckDuckGoAdapter(SiteAdapter):
         query: str | None = kwargs.get("query")
         if query:
             return [query]
-        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
-            try:
-                lines = [line.strip() for line in sys.stdin if line.strip()]
-            except OSError:
-                lines = []
-            if lines:
-                return lines
+        lines = read_stdin_lines()
+        if lines:
+            return lines
         raise ValueError("ddg adapter requires --query")
 
     def get_crawl_options(self) -> list[dict[str, Any]]:
@@ -131,7 +120,7 @@ class DuckDuckGoAdapter(SiteAdapter):
 
             items.append(
                 ScrapedItem(
-                    id=_make_item_id(url, query),
+                    id=stable_item_id(url, query),
                     site_id="ddg",
                     url=url,
                     text=title,

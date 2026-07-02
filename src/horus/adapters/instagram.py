@@ -7,11 +7,11 @@ Credentials: requires manual login (horus login instagram); no anonymous access.
 
 import json
 import re
-import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+from horus.adapters._io import read_stdin_lines
 from horus.adapters._meta import _MEDIA_TYPE_MAP, _extract_media_urls
 from horus.adapters.base import SiteAdapter
 from horus.models import ScrapedItem
@@ -178,13 +178,9 @@ class InstagramAdapter(SiteAdapter):
         user = kwargs.get("user")
         if user:
             return [f"https://www.instagram.com/{user.lstrip('@')}/"]
-        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
-            try:
-                users = [ln.strip().lstrip("@") for ln in sys.stdin if ln.strip()]
-            except OSError:
-                users = []
-            if users:
-                return [f"https://www.instagram.com/{u}/" for u in users]
+        users = [ln.lstrip("@") for ln in read_stdin_lines()]
+        if users:
+            return [f"https://www.instagram.com/{u}/" for u in users]
         raise ValueError("instagram adapter requires --user or --url")
 
     def get_crawl_options(self) -> list[dict[str, Any]]:

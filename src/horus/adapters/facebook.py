@@ -1,7 +1,7 @@
-import sys
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from horus.adapters._io import read_stdin_lines
 from horus.adapters.base import SiteAdapter
 from horus.models import ScrapedItem
 
@@ -66,15 +66,9 @@ class FacebookAdapter(SiteAdapter):
         url: str | None = kwargs.get("url")
         if url:
             return [url]
-        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
-            try:
-                lines = [
-                    line.strip() for line in sys.stdin if line.strip() and not line.startswith("#")
-                ]
-                if lines:
-                    return lines
-            except OSError:
-                pass
+        lines = read_stdin_lines(skip_comments=True)
+        if lines:
+            return lines
         raise ValueError("facebook adapter requires --url")
 
     def get_crawl_options(self) -> list[dict[str, Any]]:
