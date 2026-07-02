@@ -2,9 +2,8 @@ import asyncio
 import csv
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import click
 from rich.console import Console
@@ -14,6 +13,7 @@ from horus.adapters import get_adapter, list_adapters
 from horus.config import Settings
 from horus.core.browser import BaseBrowser
 from horus.core.dates import parse_since
+from horus.core.orchestrator import CrawlOrchestrator, CrawlOutcome
 from horus.core.scraper import BaseScraper
 from horus.core.storage import HorusStorage
 from horus.core.thread_tree import build_thread_trees, render_thread_md
@@ -145,6 +145,24 @@ def crawl(
     asyncio.run(_crawl(site, since, limit, no_state, output, stdout, extra_args))
 
 
+class _ConsoleReporter:
+    """CrawlReporter that reproduces the CLI's Rich console + stdout JSONL output."""
+
+    def __init__(self, emit_stdout: bool) -> None:
+        self._emit_stdout = emit_stdout
+
+    def log(self, message: str) -> None:
+        console.print(message)
+
+    def progress(self, scroll: int, total: int) -> None:
+        console.print(f"  [dim]scroll #{scroll} — {total} items so far[/dim]")
+
+    def emit(self, item: ScrapedItem | ScrapedPage) -> None:
+        """Write one JSONL line to stdout if --stdout is set."""
+        if self._emit_stdout:
+            click.echo(item.model_dump_json())
+
+
 async def _crawl(
     site: str,
     since_str: str | None,
@@ -187,244 +205,54 @@ async def _crawl(
             )
         state_path = None
 
-    started_at = datetime.now(UTC)
-    total_found = 0
-    total_new = 0
-
-    scraper_kwargs: dict[str, Any] = {
-        "headless": settings.headless,
-        "scroll_delay_min": settings.scroll_delay_min,
-        "scroll_delay_max": settings.scroll_delay_max,
-        "request_jitter": settings.request_jitter,
-        "max_pages": settings.max_pages,
-    }
-
-    def _emit(item: ScrapedItem | ScrapedPage) -> None:
-        """Write one JSONL line to stdout if --stdout is set."""
-        if emit_stdout:
-            click.echo(item.model_dump_json())
-
-    interrupted = False
+    orch = CrawlOrchestrator(
+        storage,
+        settings,
+        # Module-level name resolved at call time; patch("horus.cli.BaseScraper") still works.
+        scraper_cls=BaseScraper,
+        reporter=_ConsoleReporter(emit_stdout),
+    )
+    # Parse --since ONLY for the intercept path, exactly as before: _parse_since was
+    # only reached inside the intercept branch, so `crawl web --since garbage` is
+    # currently ignored — parsing eagerly for all modes would turn it into a
+    # BadParameter failure (behavior change).
+    since = (
+        _parse_since(since_str)
+        if not (adapter_cls.has_http_mode or adapter_cls.has_page_mode)
+        else None
+    )
+    outcome = CrawlOutcome()
     try:
-        if adapter_cls.has_http_mode:
-            # Direct HTTP path (no Playwright): DDG, serper, etc.
-            console.print(f"Searching [cyan]{site}[/cyan]...")
-            # Forward the top-level --limit into http-mode adapters. It lands in the
-            # `limit` local (a Click option), not in kwargs, so http adapters never
-            # saw it. kwargs wins on collision to keep the serve path correct.
-            http_kwargs = {"limit": limit, **kwargs}
-            try:
-                items = await adapter.fetch_items(**http_kwargs)
-            except (ValueError, RuntimeError) as e:
-                console.print(f"[red]{e}[/red]")
-                storage.close()
-                sys.exit(1)
-            items = adapter.post_process(items)
-            new_count = storage.upsert_items(items)
-            total_found = len(items)
-            total_new = new_count
-            storage.log_crawl(site, str(kwargs), total_found, total_new, started_at)
-            for item in items:
-                _emit(item)
-        else:
-            async with BaseScraper(**scraper_kwargs) as scraper:
-                if adapter_cls.has_page_mode:
-                    # Page-based path: HTML → Markdown
-                    wait_for = adapter_cls.wait_for_selector
-                    page_script = adapter_cls.page_script
-                    content_script = adapter_cls.content_script
-                    for url in urls:
-                        console.print(f"Fetching [cyan]{url}[/cyan]...")
-                        page = await scraper.scrape_page(
-                            url,
-                            state_path,
-                            site_id=site,
-                            wait_for=wait_for,
-                            page_script=page_script,
-                            content_script=content_script,
-                        )
-                        is_new = storage.upsert_page(page)
-                        total_found += 1
-                        total_new += int(is_new)
-                        if output_dir:
-                            _write_page_md(page, output_dir)
-                            console.print(f"  [dim]→ saved markdown to {output_dir}[/dim]")
-                        _emit(page)
-                    storage.log_crawl(
-                        site,
-                        urls[0] if len(urls) == 1 else f"{len(urls)} URLs",
-                        total_found,
-                        total_new,
-                        started_at,
-                    )  # noqa: E501
-                else:
-                    # Response-intercept path (Threads etc.)
-                    since = _parse_since(since_str)
-                    if since is None:
-                        since = storage.get_latest_timestamp(site)
-
-                    with_comments = kwargs.get("with_comments") == "true"
-                    use_intercept: bool = getattr(adapter_cls, "comments_via_interception", False)
-                    # Populated in on_batch when with_comments is True
-                    crawled_top_level: list[ScrapedItem] = []
-
-                    def on_progress(scroll: int, total: int) -> None:
-                        console.print(f"  [dim]scroll #{scroll} — {total} items so far[/dim]")
-
-                    def on_batch(batch: list[ScrapedItem]) -> None:
-                        nonlocal total_found, total_new
-                        # Defensive: the IG profile timeline never yields replies today (comments
-                        # only fire on modal-open, not during the primary grid crawl). Drop any
-                        # is_reply items so a future inline-comment payload can't land with url=""
-                        # ahead of the --with-comments backfill (and never persists without it).
-                        if use_intercept:
-                            batch = [p for p in batch if not p.extra.get("is_reply", False)]
-                        if not batch:
-                            return
-                        batch = adapter.post_process(batch)
-                        new_count = storage.upsert_items(batch)
-                        total_found += len(batch)
-                        total_new += new_count
-                        for item in batch:
-                            _emit(item)
-                        # Collect top-level posts for comment fetch. The is_reply filter is
-                        # still needed for the non-interception (HTML parser) path, where the
-                        # guard above is skipped and replies may reach this batch.
-                        if with_comments:
-                            crawled_top_level.extend(
-                                p for p in batch if not p.extra.get("is_reply", False)
-                            )
-
-                    crawled_via_post_url = False
-                    for url in urls:
-                        console.print(f"Crawling [cyan]{url}[/cyan]...")
-                        if use_intercept and adapter.is_post_url(url):
-                            # Single post: IG inlines the post as JSON in the page (direct
-                            # navigation fires no interceptable XHR), so pull it from SSR.
-                            crawled_via_post_url = True
-                            blob = await scraper.fetch_inline_json(
-                                url, adapter.extract_inline_items, state_path
-                            )
-                            items = adapter.parse_response(blob)
-                            if items:
-                                on_batch(items)
-                            else:
-                                console.print(f"  [yellow]No post data found at {url}[/yellow]")
-                        else:
-                            await scraper.scrape(
-                                url,
-                                adapter.get_response_filter(),
-                                adapter.parse_response,
-                                state_path,
-                                since=since,
-                                on_progress=on_progress,
-                                on_batch=on_batch,
-                            )
-                        storage.log_crawl(site, url, total_found, total_new, started_at)
-
-                    if with_comments and crawled_top_level:
-                        console.print(f"Fetching comments for {len(crawled_top_level)} posts...")
-
-                        def _upsert_comments(
-                            post: ScrapedItem, comment_items: list[ScrapedItem]
-                        ) -> None:
-                            nonlocal total_found, total_new
-                            if not comment_items:
-                                return
-                            new_count = storage.upsert_items(comment_items)
-                            total_found += len(comment_items)
-                            total_new += new_count
-                            console.print(
-                                f"  [dim]{post.url}: {len(comment_items)} comments "
-                                f"({new_count} new)[/dim]"
-                            )
-
-                        if use_intercept:
-                            # NOTE: this branch is Instagram-specific. `comments_via_interception`
-                            # currently means "IG profile-grid modal walk" — the instagram.com
-                            # profile URL and grid semantics are assumed here. A future adapter
-                            # setting the flag would need this generalised (e.g. adapter-supplied
-                            # profile URL + thumbnail selector).
-                            # IG comments only fire when a post is opened as an in-app MODAL from
-                            # the profile grid (direct /p/<code>/ navigation inlines the post and
-                            # fires nothing). So walk each profile's grid once, clicking
-                            # thumbnails, then attribute comments by media_id == post pk.
-                            posts_by_profile: dict[str, list[ScrapedItem]] = {}
-                            for post in crawled_top_level:
-                                handle = (post.author_name or "").lstrip("@")
-                                if handle:
-                                    posts_by_profile.setdefault(handle, []).append(post)
-
-                            def on_walk(done: int, total: int) -> None:
-                                console.print(f"  [dim]modal {done} — {total} responses[/dim]")
-
-                            # Single source of truth for IG shortcode extraction (this branch
-                            # is already Instagram-specific; see note above).
-                            from horus.adapters.instagram import post_code_from_url
-
-                            for handle, posts in posts_by_profile.items():
-                                profile_url = f"https://www.instagram.com/{handle}/"
-                                # For a --url crawl, target those exact posts' thumbnails;
-                                # for --user, walk the first N recent thumbnails in grid order.
-                                target_codes = (
-                                    [c for p in posts if (c := post_code_from_url(p.url))]
-                                    if crawled_via_post_url
-                                    else None
-                                )
-                                try:
-                                    raw = await scraper.scrape_comments_via_grid(
-                                        profile_url,
-                                        adapter.get_response_filter(),
-                                        adapter.parse_response,
-                                        state_path,
-                                        max_posts=len(posts),
-                                        target_codes=target_codes,
-                                        on_progress=on_walk,
-                                    )
-                                except Exception as e:
-                                    console.print(
-                                        f"  [yellow]Warning: comment walk failed for "
-                                        f"@{handle}: {e}[/yellow]"
-                                    )
-                                    continue
-                                comments_by_media: dict[str, list[ScrapedItem]] = {}
-                                for c in raw:
-                                    if c.extra.get("is_reply"):
-                                        comments_by_media.setdefault(
-                                            c.extra.get("parent_post_id", ""), []
-                                        ).append(c)
-                                for post in posts:
-                                    cs = comments_by_media.get(post.id, [])
-                                    for c in cs:
-                                        c.url = post.url  # backfill (comment body lacks shortcode)
-                                    _upsert_comments(post, cs)
-                        else:
-                            comment_parser = adapter.get_comment_parser()
-                            for post in crawled_top_level:
-                                try:
-                                    comment_items = (
-                                        await scraper.scrape_comments(
-                                            url=post.url,
-                                            post_pk=post.id,
-                                            parser=comment_parser,
-                                            state_path=state_path,
-                                        )
-                                        if comment_parser
-                                        else []
-                                    )
-                                    _upsert_comments(post, comment_items)
-                                except Exception as e:
-                                    console.print(
-                                        f"  [yellow]Warning: failed to fetch comments "
-                                        f"for {post.url}: {e}[/yellow]"
-                                    )
+        await orch.run(
+            adapter,
+            urls,
+            adapter_cls=adapter_cls,
+            site=site,
+            kwargs=kwargs,
+            limit=limit,
+            since=since,
+            state_path=state_path,
+            output_dir=output_dir,
+            write_page_md=_write_page_md,
+            outcome=outcome,
+        )
     except (KeyboardInterrupt, asyncio.CancelledError):
-        interrupted = True
+        outcome.interrupted = True
+    except (ValueError, RuntimeError) as e:
+        # Was the http-mode sys.exit path (known divergence #1: now wraps all modes).
+        console.print(f"[red]{e}[/red]")
+        storage.close()
+        sys.exit(1)
 
-    if interrupted:
-        console.print(f"\n[yellow]Interrupted.[/yellow] {total_found} fetched, {total_new} saved.")
+    if outcome.interrupted:
+        console.print(
+            f"\n[yellow]Interrupted.[/yellow] "
+            f"{outcome.total_found} fetched, {outcome.total_new} saved."
+        )
     else:
-        console.print(f"\n[bold]Done.[/bold] {total_found} fetched, {total_new} new saved.")
+        console.print(
+            f"\n[bold]Done.[/bold] {outcome.total_found} fetched, {outcome.total_new} new saved."
+        )
     storage.close()
 
 
