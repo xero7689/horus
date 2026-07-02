@@ -29,6 +29,8 @@ class SiteAdapter(ABC):
     description: ClassVar[str] = ""
     has_page_mode: ClassVar[bool] = False  # True = use scrape_page() instead of scrape()
     has_http_mode: ClassVar[bool] = False  # True = use fetch_items(), no Playwright needed
+    # True = --with-comments uses scrape() interception instead of scrape_comments() HTML parsing
+    comments_via_interception: ClassVar[bool] = False
 
     @abstractmethod
     def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
@@ -51,6 +53,22 @@ class SiteAdapter(ABC):
         Each dict: {"name": "--user", "help": "...", "required": False, "default": None}
         """
         return []
+
+    def is_post_url(self, url: str) -> bool:
+        """True if `url` points to a single post/permalink rather than a profile/listing.
+
+        Interception adapters can use this to route a single-post URL through a
+        different fetch path (e.g. SSR-inlined JSON) than a scrollable profile.
+        """
+        return False
+
+    def extract_inline_items(self, html: str) -> dict[str, Any]:
+        """Extract a parse_response-compatible body from a page's inlined JSON.
+
+        Used for single-post URLs whose data is server-inlined instead of fired as an
+        interceptable XHR. Return {} if nothing usable is found. Default: nothing.
+        """
+        return {}
 
     async def fetch_items(self, **kwargs: Any) -> list[ScrapedItem]:
         """Fetch items via direct HTTP (no Playwright). Override when has_http_mode=True."""

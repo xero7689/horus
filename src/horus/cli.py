@@ -265,6 +265,7 @@ async def _crawl(
                         since = storage.get_latest_timestamp(site)
 
                     with_comments = kwargs.get("with_comments") == "true"
+                    use_intercept: bool = getattr(adapter_cls, "comments_via_interception", False)
                     # Populated in on_batch when with_comments is True
                     crawled_top_level: list[ScrapedItem] = []
 
@@ -273,56 +274,151 @@ async def _crawl(
 
                     def on_batch(batch: list[ScrapedItem]) -> None:
                         nonlocal total_found, total_new
+                        # Defensive: the IG profile timeline never yields replies today (comments
+                        # only fire on modal-open, not during the primary grid crawl). Drop any
+                        # is_reply items so a future inline-comment payload can't land with url=""
+                        # ahead of the --with-comments backfill (and never persists without it).
+                        if use_intercept:
+                            batch = [p for p in batch if not p.extra.get("is_reply", False)]
+                        if not batch:
+                            return
                         batch = adapter.post_process(batch)
                         new_count = storage.upsert_items(batch)
                         total_found += len(batch)
                         total_new += new_count
                         for item in batch:
                             _emit(item)
-                        # Collect top-level posts for comment fetch
+                        # Collect top-level posts for comment fetch. The is_reply filter is
+                        # still needed for the non-interception (HTML parser) path, where the
+                        # guard above is skipped and replies may reach this batch.
                         if with_comments:
                             crawled_top_level.extend(
                                 p for p in batch if not p.extra.get("is_reply", False)
                             )
 
+                    crawled_via_post_url = False
                     for url in urls:
                         console.print(f"Crawling [cyan]{url}[/cyan]...")
-                        await scraper.scrape(
-                            url,
-                            adapter.get_response_filter(),
-                            adapter.parse_response,
-                            state_path,
-                            since=since,
-                            on_progress=on_progress,
-                            on_batch=on_batch,
-                        )
+                        if use_intercept and adapter.is_post_url(url):
+                            # Single post: IG inlines the post as JSON in the page (direct
+                            # navigation fires no interceptable XHR), so pull it from SSR.
+                            crawled_via_post_url = True
+                            blob = await scraper.fetch_inline_json(
+                                url, adapter.extract_inline_items, state_path
+                            )
+                            items = adapter.parse_response(blob)
+                            if items:
+                                on_batch(items)
+                            else:
+                                console.print(f"  [yellow]No post data found at {url}[/yellow]")
+                        else:
+                            await scraper.scrape(
+                                url,
+                                adapter.get_response_filter(),
+                                adapter.parse_response,
+                                state_path,
+                                since=since,
+                                on_progress=on_progress,
+                                on_batch=on_batch,
+                            )
                         storage.log_crawl(site, url, total_found, total_new, started_at)
 
-                    # Fetch comments for posts collected during this crawl
-                    comment_parser = adapter.get_comment_parser() if with_comments else None
-                    if comment_parser and crawled_top_level:
+                    if with_comments and crawled_top_level:
                         console.print(f"Fetching comments for {len(crawled_top_level)} posts...")
-                        for post in crawled_top_level:
-                            try:
-                                comment_items = await scraper.scrape_comments(
-                                    url=post.url,
-                                    post_pk=post.id,
-                                    parser=comment_parser,
-                                    state_path=state_path,
+
+                        def _upsert_comments(
+                            post: ScrapedItem, comment_items: list[ScrapedItem]
+                        ) -> None:
+                            nonlocal total_found, total_new
+                            if not comment_items:
+                                return
+                            new_count = storage.upsert_items(comment_items)
+                            total_found += len(comment_items)
+                            total_new += new_count
+                            console.print(
+                                f"  [dim]{post.url}: {len(comment_items)} comments "
+                                f"({new_count} new)[/dim]"
+                            )
+
+                        if use_intercept:
+                            # NOTE: this branch is Instagram-specific. `comments_via_interception`
+                            # currently means "IG profile-grid modal walk" — the instagram.com
+                            # profile URL and grid semantics are assumed here. A future adapter
+                            # setting the flag would need this generalised (e.g. adapter-supplied
+                            # profile URL + thumbnail selector).
+                            # IG comments only fire when a post is opened as an in-app MODAL from
+                            # the profile grid (direct /p/<code>/ navigation inlines the post and
+                            # fires nothing). So walk each profile's grid once, clicking
+                            # thumbnails, then attribute comments by media_id == post pk.
+                            posts_by_profile: dict[str, list[ScrapedItem]] = {}
+                            for post in crawled_top_level:
+                                handle = (post.author_name or "").lstrip("@")
+                                if handle:
+                                    posts_by_profile.setdefault(handle, []).append(post)
+
+                            def on_walk(done: int, total: int) -> None:
+                                console.print(f"  [dim]modal {done} — {total} responses[/dim]")
+
+                            # Single source of truth for IG shortcode extraction (this branch
+                            # is already Instagram-specific; see note above).
+                            from horus.adapters.instagram import post_code_from_url
+
+                            for handle, posts in posts_by_profile.items():
+                                profile_url = f"https://www.instagram.com/{handle}/"
+                                # For a --url crawl, target those exact posts' thumbnails;
+                                # for --user, walk the first N recent thumbnails in grid order.
+                                target_codes = (
+                                    [c for p in posts if (c := post_code_from_url(p.url))]
+                                    if crawled_via_post_url
+                                    else None
                                 )
-                                if comment_items:
-                                    new_count = storage.upsert_items(comment_items)
-                                    total_found += len(comment_items)
-                                    total_new += new_count
-                                    console.print(
-                                        f"  [dim]{post.url}: {len(comment_items)} comments "
-                                        f"({new_count} new)[/dim]"
+                                try:
+                                    raw = await scraper.scrape_comments_via_grid(
+                                        profile_url,
+                                        adapter.get_response_filter(),
+                                        adapter.parse_response,
+                                        state_path,
+                                        max_posts=len(posts),
+                                        target_codes=target_codes,
+                                        on_progress=on_walk,
                                     )
-                            except Exception as e:
-                                console.print(
-                                    f"  [yellow]Warning: failed to fetch comments "
-                                    f"for {post.url}: {e}[/yellow]"
-                                )
+                                except Exception as e:
+                                    console.print(
+                                        f"  [yellow]Warning: comment walk failed for "
+                                        f"@{handle}: {e}[/yellow]"
+                                    )
+                                    continue
+                                comments_by_media: dict[str, list[ScrapedItem]] = {}
+                                for c in raw:
+                                    if c.extra.get("is_reply"):
+                                        comments_by_media.setdefault(
+                                            c.extra.get("parent_post_id", ""), []
+                                        ).append(c)
+                                for post in posts:
+                                    cs = comments_by_media.get(post.id, [])
+                                    for c in cs:
+                                        c.url = post.url  # backfill (comment body lacks shortcode)
+                                    _upsert_comments(post, cs)
+                        else:
+                            comment_parser = adapter.get_comment_parser()
+                            for post in crawled_top_level:
+                                try:
+                                    comment_items = (
+                                        await scraper.scrape_comments(
+                                            url=post.url,
+                                            post_pk=post.id,
+                                            parser=comment_parser,
+                                            state_path=state_path,
+                                        )
+                                        if comment_parser
+                                        else []
+                                    )
+                                    _upsert_comments(post, comment_items)
+                                except Exception as e:
+                                    console.print(
+                                        f"  [yellow]Warning: failed to fetch comments "
+                                        f"for {post.url}: {e}[/yellow]"
+                                    )
     except (KeyboardInterrupt, asyncio.CancelledError):
         interrupted = True
 

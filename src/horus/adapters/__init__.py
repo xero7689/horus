@@ -1,6 +1,7 @@
 from horus.adapters.base import SiteAdapter
 from horus.adapters.ddg import DuckDuckGoAdapter
 from horus.adapters.facebook import FacebookAdapter
+from horus.adapters.instagram import InstagramAdapter
 from horus.adapters.serper import SerperAdapter
 from horus.adapters.threads import ThreadsAdapter
 from horus.adapters.twitter import TwitterAdapter
@@ -33,5 +34,6 @@ register(DuckDuckGoAdapter)
 register(FacebookAdapter)
 register(TwitterAdapter)
 register(SerperAdapter)
+register(InstagramAdapter)
 
 __all__ = ["SiteAdapter", "register", "get_adapter", "list_adapters"]

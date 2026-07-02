@@ -251,6 +251,135 @@ class BaseScraper(BaseBrowser):
 
         return parser(html, post_pk=post_pk)
 
+    async def fetch_inline_json(
+        self,
+        url: str,
+        extractor: Callable[[str], dict[str, Any]],
+        state_path: Path | None = None,
+    ) -> dict[str, Any]:
+        """Navigate to `url`, hand the rendered HTML to `extractor`, return its dict result.
+
+        For pages that inline their data as JSON in <script> tags rather than firing an
+        interceptable XHR (e.g. an Instagram post opened by direct URL). The extractor is
+        adapter-supplied so page-shape knowledge stays in the adapter.
+        """
+        assert self._browser is not None, "Use as async context manager"
+        context = await self.new_context(state_path=state_path)
+        page = await context.new_page()
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            try:
+                await page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                pass  # timeout is fine — inlined JSON is present at initial render
+            html = await page.content()
+        finally:
+            await context.close()
+        return extractor(html)
+
+    async def scrape_comments_via_grid(
+        self,
+        profile_url: str,
+        response_filter: Callable[[str, dict[str, Any]], bool],
+        parser: Callable[[dict[str, Any]], list[ScrapedItem]],
+        state_path: Path | None = None,
+        *,
+        max_posts: int = 12,
+        target_codes: list[str] | None = None,
+        thumbnail_selector: str = 'a[href*="/p/"]',
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[ScrapedItem]:
+        """Capture comments by walking a profile grid and opening each post as an in-app modal.
+
+        Instagram only fires the ``/api/v1/media/<id>/comments/`` (and ``/info/``) XHRs when a
+        post is opened as a client-side MODAL from the profile grid — a direct navigation to
+        ``/p/<code>/`` inlines the post and fires nothing interceptable. So we load the profile
+        and open posts as modals (closing each with Escape), parsing whatever the
+        ``response_filter`` accepts. Two modes:
+        - ``target_codes`` given → find & open each specific post's thumbnail (scrolling the
+          grid to load it), for exact posts (e.g. a single ``--url`` crawl).
+        - otherwise → open the first ``max_posts`` thumbnails in grid order (recent posts).
+
+        Returns all parsed items (posts from ``/info/`` and comments from ``/comments/``),
+        deduped by id. Callers attribute comments to posts via ``parent_post_id`` (== media_id).
+        """
+        assert self._browser is not None, "Use as async context manager"
+
+        collected: list[dict[str, Any]] = []
+
+        async def on_response(response: Response) -> None:
+            try:
+                body = await response.json()
+                if response_filter(response.url, body):
+                    collected.append(body)
+            except Exception:
+                pass
+
+        context = await self.new_context(state_path=state_path)
+        page = await context.new_page()
+        page.on("response", on_response)
+
+        async def _open_and_capture(locator: Any) -> None:
+            """Click a thumbnail, wait for its modal XHRs, then close the modal."""
+            prev = len(collected)
+            try:
+                await locator.scroll_into_view_if_needed(timeout=5000)
+                await locator.click(timeout=8000)
+            except Exception:
+                return  # thumbnail vanished / not clickable — skip
+            for _ in range(12):  # wait for the modal's comments/info XHRs to arrive
+                if len(collected) > prev:
+                    break
+                await asyncio.sleep(0.5)
+            await asyncio.sleep(random.uniform(1, 2))
+            try:
+                await page.keyboard.press("Escape")
+            except Exception:
+                pass
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+
+        try:
+            await page.goto(profile_url, wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(random.uniform(2, 4))
+
+            if target_codes:
+                for idx, code in enumerate(target_codes):
+                    # A post's grid anchor may be /p/<code>/ or /reel/<code>/ — match both,
+                    # else a reel's comments would be silently skipped after 20 dry scrolls.
+                    thumb = page.locator(f'a[href*="/p/{code}/"], a[href*="/reel/{code}/"]').first
+                    # scroll the grid until this specific post's thumbnail loads
+                    for _ in range(20):
+                        if await thumb.count() > 0:
+                            break
+                        await page.mouse.wheel(0, 3000)
+                        await asyncio.sleep(1.2)
+                    if await thumb.count() == 0:
+                        continue  # too old to reach via grid — skip
+                    await _open_and_capture(thumb)
+                    if on_progress:
+                        on_progress(idx + 1, len(collected))
+            else:
+                thumbnails = page.locator(thumbnail_selector)
+                walk = min(max_posts, await thumbnails.count())
+                for i in range(walk):
+                    await _open_and_capture(thumbnails.nth(i))
+                    if on_progress:
+                        on_progress(i + 1, len(collected))
+        finally:
+            await context.close()
+
+        items: list[ScrapedItem] = []
+        for body in collected:
+            items.extend(parser(body))
+
+        seen: set[str] = set()
+        unique: list[ScrapedItem] = []
+        for item in items:
+            if item.id not in seen:
+                seen.add(item.id)
+                unique.append(item)
+        return unique
+
     async def _scroll_page(self, page: Page) -> None:
         """Scroll to bottom with random delay."""
         delay = random.uniform(

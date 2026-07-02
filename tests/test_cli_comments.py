@@ -55,6 +55,8 @@ class TestCrawlWithComments:
         mock_adapter_cls.has_http_mode = False
         mock_adapter_cls.has_page_mode = False
         mock_adapter_cls.requires_login = False
+        # Threads uses HTML parser, not response interception for comments
+        mock_adapter_cls.comments_via_interception = False
 
         runner = CliRunner()
         with (

@@ -23,20 +23,25 @@ src/horus/
 │   ├── scraper.py      # BaseScraper（scrape：scroll + response intercept；scrape_page：HTML → Markdown）
 │   └── storage.py      # HorusStorage（SQLite + FTS5；items + pages 兩張表）
 └── adapters/
-    ├── base.py         # SiteAdapter ABC（has_page_mode flag + 3 abstract methods）
+    ├── base.py         # SiteAdapter ABC（has_page_mode / comments_via_interception flags + 3 abstract methods）
     ├── __init__.py     # Registry（register, get_adapter, list_adapters）
+    ├── _meta.py        # 共用 Meta 媒體解析（_MEDIA_TYPE_MAP, _extract_media_urls；threads/instagram 共用）
     ├── threads.py      # Threads adapter（GraphQL 攔截）
     ├── twitter.py      # Twitter/X adapter（GraphQL 攔截，anonymous 可用）
+    ├── instagram.py    # Instagram adapter（GraphQL/XHR 攔截，貼文 + 頂層留言，comments_via_interception=True）
     ├── web.py          # GenericWebAdapter（任意公開網頁 → Markdown，has_page_mode=True）
     └── serper.py       # Serper adapter（Google Search via httpx，has_http_mode=True）
 tests/
 ├── conftest.py         # storage fixture（in-memory SQLite）
 ├── test_storage.py
 ├── fixtures/twitter/   # 真實 X GraphQL response（parser 測試用）
+├── fixtures/instagram/ # 消毒後 IG response（timeline/media_info/comments）
 └── adapters/
     ├── test_threads_adapter.py
     ├── test_twitter_adapter.py
-    └── test_web_adapter.py
+    ├── test_web_adapter.py
+    ├── test_instagram_adapter.py  # parser/filter/get_urls（用消毒 fixtures）
+    └── test_instagram_cli.py      # cli 攔截留言分支 + url 回填
 ```
 
 ## 常用指令
@@ -49,6 +54,9 @@ horus crawl threads --url https://...            # 爬特定 URL
 horus crawl twitter --user @NASA                 # 爬 X 貼文（含置頂，anonymous 可用）
 horus crawl twitter --user @NASA --mode replies  # 爬 X 回覆
 horus crawl twitter --url https://x.com/NASA/status/123  # 爬單一貼文/串
+horus login instagram                            # 開 browser 手動登入（建議分身帳號），存 states/instagram.json
+horus crawl instagram --user @nasa               # 爬 IG profile 貼文（需登入）
+horus crawl instagram --user @nasa --with-comments  # 貼文 + grid 首頁各貼的頂層留言（modal walk）
 horus crawl web --url https://example.com        # 爬公開網頁，存 pages 表
 horus crawl web --url https://example.com --output ./pages/   # 同時輸出 .md 檔
 horus crawl web --url-list urls.txt --output ./pages/          # 批次爬取
@@ -141,6 +149,49 @@ uv run horus --help                    # 確認 CLI 可用
   `is_quote`, `parent_post_id`, `conversation_id`, `reply_to_username`
 - 自串/回覆沿用 `conversation_id`/`parent_post_id`/`is_reply` 慣例，接 `thread_tree` 與前端詳情頁；
   跨頁回覆層級會壓平（已知限制）
+
+## Instagram Adapter 說明
+
+- 走 response 攔截（同 Threads/Twitter，`has_page_mode=False`），攔截三種 endpoint：
+  - graphql timeline connection（`xdt_api__v1__feed__user_timeline_graphql_connection`）→ profile 貼文
+  - `/api/v1/media/<id>/info/`（body 含 `items`）→ modal 開啟時的單貼資料
+  - `/api/v1/media/<id>/comments/`（body 含 `comments`）→ 頂層留言
+- **需登入**：`requires_login=True`，先 `horus login instagram`（**建議用分身帳號**，爬取有封號風險）。
+  無 anonymous 模式。
+- **兩種抓取模式**（`is_post_url()` 判斷 URL 屬單貼還是 profile）：
+  - `--user @name`（profile 貼文）/ stdin 多 user（一行一個）→ 走 timeline XHR 攔截。
+  - `--url <post>`（`/p/<code>/` 或 `/reel/<code>/`）→ 直接導航不 fire 可攔截 XHR，改走 **SSR-JSON**：
+    `extract_inline_items()` 從頁面 `<script type=application/json>` 抽出 inline 的
+    `xdt_api__v1__media__shortcode__web_info`（`{items:[...]}` 節點），交給 `parse_response` 的 items 分支。
+    cli 對 interception adapter 的 post URL 走 `scraper.fetch_inline_json()`，非 post URL 走 `scrape()`。
+- **`--with-comments`：只抓頂層留言**（不抓 reply 的 reply）。留言只存媒體 URL（同 threads）。
+- **留言擷取機制（`comments_via_interception=True`，實機驗證過）**：IG 留言只在「從 profile grid
+  **點縮圖開 in-app modal**」時才 fire `/api/v1/media/<id>/comments/`；直接導航貼文頁**不會** fire。因此：
+  - 主爬 `on_batch` **一律丟棄** `is_reply` 項目（即使沒帶 `--with-comments`），防止 `url=""` 留言誤落地。
+  - `--with-comments` 時，cli 依貼文 `author_name` 推出 profile URL，呼叫
+    `scraper.scrape_comments_via_grid(profile_url, ...)`：載入 profile → 開 modal → 攔留言，
+    再以 `parent_post_id == 貼文 pk` 歸屬（杜絕跨貼文誤掛）、回填 `url = 貼文 URL` 後才存。
+    - `--user` 模式：`target_codes=None` → 點 grid 首屏前 N 個縮圖（依序，近期貼文）。
+    - `--url` 模式：`target_codes=[該貼 code]` → 捲動 grid 找到該貼**專屬**縮圖再點（精準抓指定貼文）。
+- 關鍵解析：貼文 `_parse_item(node)` 用 `pk`/`code`/`taken_at`/`caption.text`/`user`，`like_count`/
+  `comment_count` **直接取 node**（非 threads 的 `text_post_app_info`）；`media_urls` 複用 `_meta._extract_media_urls`。
+  留言 `_parse_comment` 以 body 內 `media_id`（= 貼文 `pk`，裸值無 `_ownerid` 後綴）綁回貼文。
+- extra 欄位（貼文）：`like_count`, `comment_count`, `media_type`, `media_urls`, `is_reply=False`,
+  `parent_post_id=None`, `conversation_id=None`
+- extra 欄位（留言）：`comment_like_count`（**注意**：留言用此鍵，非貼文的 `like_count`）,
+  `child_comment_count`, `is_reply=True`, `parent_post_id`/`conversation_id`（= media_id）,
+  `media_type=None`, `media_urls=[]`
+- 已知限制：
+  - **`--url` 單貼留言只到首批**：SSR-JSON 拿完整貼文；`--with-comments` 走精準 modal，只攔 modal
+    開啟當下的第一批（~15 則）頂層留言，留言分頁 cursor 未實作。若該貼太舊、捲動 grid 20 次仍找不到
+    縮圖則跳過留言（貼文仍會存）。
+  - **`--user` 留言只涵蓋 grid 首頁貼文的首批留言**：modal walk 只點 profile grid 首屏載入的縮圖
+    （~9–12 篇），grid 未捲動載入更多；每篇也只攔到第一批（~15 則）頂層留言。
+  - **carousel 影片 URL 未抓**：`_extract_media_urls` 對 carousel 只取圖片 candidates，carousel 內
+    `video_versions` 未展開（單則影片貼文的 `video_versions` 有抓）。
+  - 缺 `code` 的貼文 `url` 會是 `https://www.instagram.com/p//`（保留 item 讓 caller 判斷，不丟棄）。
+  - stdin 多 user 不濾 `#` 註解行（與 threads 一致）。
+  - 帳號封號風險 → 建議分身帳號。
 
 ## GenericWebAdapter（web）說明
 
