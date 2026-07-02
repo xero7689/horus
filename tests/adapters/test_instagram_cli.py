@@ -1,10 +1,11 @@
 """CLI-layer tests for the Instagram adapter interception comment path.
 
 Instagram comments only fire when a post is opened as an in-app MODAL from the profile
-grid (direct /p/<code>/ navigation inlines the post and fires nothing). So the CLI fetches
-comments by calling ``scraper.scrape_comments_via_grid(profile_url, ...)`` once per profile
-(derived from each crawled post's ``author_name``), then attributes comments to posts by
-``parent_post_id == post.id`` and backfills the comment URL from the parent post.
+grid (direct /p/<code>/ navigation inlines the post and fires nothing). So the adapter's
+``fetch_comments`` override calls ``scraper.scrape_comments_via_grid(profile_url, ...)``
+once per profile (derived from each crawled post's ``author_name``), then attributes
+comments to posts by ``parent_post_id == post.id`` and backfills the comment URL from the
+parent post before yielding to the orchestrator.
 
 Covers:
 1. --with-comments uses scrape_comments_via_grid(), never the HTML scrape_comments() (test 1)
@@ -24,6 +25,7 @@ from click.testing import CliRunner
 
 from horus.adapters import _REGISTRY
 from horus.adapters.base import SiteAdapter
+from horus.adapters.instagram import InstagramAdapter
 from horus.cli import main
 from horus.core.storage import HorusStorage
 from horus.models import ScrapedItem
@@ -41,7 +43,7 @@ _FOREIGN_CMT_ID = "CMT002"
 
 
 # ---------------------------------------------------------------------------
-# Stub adapter (comments_via_interception = True)
+# Stub adapter (grid-walk comment strategy, reused from InstagramAdapter)
 # ---------------------------------------------------------------------------
 
 
@@ -52,7 +54,9 @@ class _StubIgAdapter(SiteAdapter):
     display_name = "Stub IG"
     login_url = "https://example.com/login"
     requires_login = False
-    comments_via_interception = True
+    # Reuse the real IG grid-walk strategy unbound: a plain SiteAdapter subclass
+    # would inherit the default per-post HTML strategy and silently skip the walk.
+    fetch_comments = InstagramAdapter.fetch_comments
 
     def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
         return lambda url, body: True

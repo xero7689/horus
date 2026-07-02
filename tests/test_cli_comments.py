@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from click.testing import CliRunner
 
+from horus.adapters.base import SiteAdapter
 from horus.adapters.threads import parse_comments_from_html
 from horus.cli import main
 from horus.models import ScrapedItem
@@ -49,14 +50,16 @@ class TestCrawlWithComments:
         mock_adapter.get_urls.return_value = ["https://www.threads.net/@alice"]
         mock_adapter.post_process.side_effect = lambda x: x
         mock_adapter.get_comment_parser.return_value = parse_comments_from_html
+        # A MagicMock's fetch_comments would async-iterate zero times; bind the real
+        # base default (per-post HTML strategy) so scrape_comments is exercised.
+        mock_adapter.fetch_comments = SiteAdapter.fetch_comments.__get__(mock_adapter)
+        mock_adapter.is_post_url.return_value = False
 
         mock_adapter_cls = MagicMock()
         mock_adapter_cls.return_value = mock_adapter
         mock_adapter_cls.has_http_mode = False
         mock_adapter_cls.has_page_mode = False
         mock_adapter_cls.requires_login = False
-        # Threads uses HTML parser, not response interception for comments
-        mock_adapter_cls.comments_via_interception = False
 
         runner = CliRunner()
         with (

@@ -1,11 +1,13 @@
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from horus.models import ScrapedItem, SiteAdapterConfig
 
 if TYPE_CHECKING:
-    from horus.core.scraper import CommentParser
+    from pathlib import Path
+
+    from horus.core.scraper import BaseScraper, CommentParser
 
 
 class SiteAdapter(ABC):
@@ -29,8 +31,6 @@ class SiteAdapter(ABC):
     description: ClassVar[str] = ""
     has_page_mode: ClassVar[bool] = False  # True = use scrape_page() instead of scrape()
     has_http_mode: ClassVar[bool] = False  # True = use fetch_items(), no Playwright needed
-    # True = --with-comments uses scrape() interception instead of scrape_comments() HTML parsing
-    comments_via_interception: ClassVar[bool] = False
 
     # Page-mode hooks (used only when has_page_mode=True); declared here so callers
     # never need getattr — undeclared hooks are how serve drifted from cli.
@@ -81,6 +81,44 @@ class SiteAdapter(ABC):
     def post_process(self, items: list[ScrapedItem]) -> list[ScrapedItem]:
         """Optional post-processing hook after crawl."""
         return items
+
+    async def fetch_comments(
+        self,
+        scraper: "BaseScraper",
+        posts: list[ScrapedItem],
+        state_path: "Path | None",
+        *,
+        via_post_url: bool = False,
+        on_event: Callable[[str], None] | None = None,
+    ) -> "AsyncIterator[tuple[ScrapedItem, list[ScrapedItem]]]":
+        """Yield (post, comments) pairs for --with-comments.
+
+        Default strategy: per-post HTML navigation via get_comment_parser()
+        (threads). Adapters with bespoke choreography (e.g. Instagram's
+        profile-grid modal walk) override this. Errors for one post must not
+        abort the rest — report via on_event and continue.
+
+        Contract: implementations only FETCH and ATTRIBUTE comments (including
+        url backfill). They must not persist, emit, or post_process — the
+        orchestrator owns all storage/reporting side effects.
+        """
+        parser = self.get_comment_parser()
+        for post in posts:
+            try:
+                comments = (
+                    await scraper.scrape_comments(
+                        url=post.url, post_pk=post.id, parser=parser, state_path=state_path
+                    )
+                    if parser
+                    else []
+                )
+            except Exception as e:  # noqa: BLE001 — one bad post must not kill the walk
+                if on_event:
+                    on_event(
+                        f"  [yellow]Warning: failed to fetch comments for {post.url}: {e}[/yellow]"
+                    )
+                continue
+            yield post, comments
 
     def get_comment_parser(self) -> "CommentParser | None":
         """Return a comment parser callable, or None if comments are not supported.

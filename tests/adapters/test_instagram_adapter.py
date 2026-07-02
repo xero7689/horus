@@ -122,9 +122,12 @@ def test_registered() -> None:
     assert get_adapter("instagram").site_id == "instagram"
 
 
-def test_comments_via_interception_flag() -> None:
-    # load-bearing: cli.py routes --with-comments through interception based on this
-    assert InstagramAdapter.comments_via_interception is True
+def test_fetch_comments_is_overridden() -> None:
+    # load-bearing: --with-comments must use IG's grid-walk strategy, not the
+    # base per-post HTML default.
+    from horus.adapters.base import SiteAdapter
+
+    assert InstagramAdapter.fetch_comments is not SiteAdapter.fetch_comments
 
 
 # ---------------------------------------------------------------------------
