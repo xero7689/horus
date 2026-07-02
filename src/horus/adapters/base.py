@@ -54,6 +54,22 @@ class SiteAdapter(ABC):
         """
         return []
 
+    def is_post_url(self, url: str) -> bool:
+        """True if `url` points to a single post/permalink rather than a profile/listing.
+
+        Interception adapters can use this to route a single-post URL through a
+        different fetch path (e.g. SSR-inlined JSON) than a scrollable profile.
+        """
+        return False
+
+    def extract_inline_items(self, html: str) -> dict[str, Any]:
+        """Extract a parse_response-compatible body from a page's inlined JSON.
+
+        Used for single-post URLs whose data is server-inlined instead of fired as an
+        interceptable XHR. Return {} if nothing usable is found. Default: nothing.
+        """
+        return {}
+
     async def fetch_items(self, **kwargs: Any) -> list[ScrapedItem]:
         """Fetch items via direct HTTP (no Playwright). Override when has_http_mode=True."""
         raise NotImplementedError(f"{self.__class__.__name__} does not implement fetch_items()")

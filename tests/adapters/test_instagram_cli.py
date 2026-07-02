@@ -159,6 +159,7 @@ def _build_scraper_mock(
         state_path: Any = None,
         *,
         max_posts: int = 12,
+        target_codes: Any = None,
         thumbnail_selector: str = "",
         on_progress: Any = None,
     ) -> list[ScrapedItem]:
@@ -418,6 +419,7 @@ def test_ig_multi_profile_walks_each_profile(monkeypatch: Any, tmp_path: Any) ->
         state_path=None,
         *,
         max_posts=12,
+        target_codes=None,
         thumbnail_selector="",
         on_progress=None,
     ):  # type: ignore[no-untyped-def]
@@ -455,3 +457,78 @@ def test_ig_multi_profile_walks_each_profile(monkeypatch: Any, tmp_path: Any) ->
 
     assert "CMTA" in by_id and by_id["CMTA"].url == "https://www.instagram.com/p/aaa/"
     assert "CMTB" in by_id and by_id["CMTB"].url == "https://www.instagram.com/p/bbb/"
+
+
+class _StubPostAdapter(_StubIgAdapter):
+    """Stub that treats /p/ URLs as single posts fetched via SSR-inlined JSON."""
+
+    site_id = "stub_post"
+
+    def is_post_url(self, url: str) -> bool:
+        return "/p/" in url
+
+    def extract_inline_items(self, html: str) -> dict[str, Any]:
+        return {"items": ["marker"]}  # content irrelevant; parse_response keys off presence
+
+    def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
+        if body.get("items"):
+            return [_post()]  # POST001, author nasa, url _POST_URL
+        return []
+
+
+def test_ig_url_post_mode_uses_ssr_then_targeted_comments(monkeypatch: Any, tmp_path: Any) -> None:
+    """A --url single-post crawl fetches the post via SSR (not scroll-intercept), then fetches
+    that exact post's comments via a targeted grid walk (target_codes)."""
+    monkeypatch.setenv("HORUS_DB_PATH", str(tmp_path / "t.db"))
+    _REGISTRY["stub_post"] = _StubPostAdapter
+    try:
+        scraper_mock = MagicMock()
+        scraper_mock.__aenter__ = AsyncMock(return_value=scraper_mock)
+        scraper_mock.__aexit__ = AsyncMock(return_value=None)
+        scraper_mock.scrape = AsyncMock(
+            side_effect=AssertionError("scrape() must not run for a post URL")
+        )
+        scraper_mock.fetch_inline_json = AsyncMock(return_value={"items": ["marker"]})
+        scraper_mock.scrape_comments = AsyncMock(return_value=[])
+
+        async def _grid_walk(
+            profile_url,
+            response_filter,
+            parser,
+            state_path=None,
+            *,
+            max_posts=12,
+            target_codes=None,
+            thumbnail_selector="",
+            on_progress=None,
+        ):  # type: ignore[no-untyped-def]
+            _grid_walk.seen_target_codes = target_codes  # type: ignore[attr-defined]
+            return [_comment()]  # CMT001, parent POST001
+
+        scraper_mock.scrape_comments_via_grid = AsyncMock(side_effect=_grid_walk)
+
+        with patch("horus.cli.BaseScraper", return_value=scraper_mock):
+            result = CliRunner().invoke(
+                main,
+                ["crawl", "stub_post", "--url", _POST_URL, "--with-comments"],
+            )
+
+        assert result.exit_code == 0, result.output
+        # SSR path used, scroll-intercept NOT used
+        scraper_mock.fetch_inline_json.assert_called_once()
+        assert scraper_mock.fetch_inline_json.call_args.args[0] == _POST_URL
+        scraper_mock.scrape.assert_not_called()
+        # comment walk targeted the exact post code (from _POST_URL .../p/abc123/)
+        assert _grid_walk.seen_target_codes == ["abc123"]  # type: ignore[attr-defined]
+
+        storage = HorusStorage(tmp_path / "t.db")
+        # ScrapedItems carry site_id="stub_ig" (the _post/_comment factories), not the
+        # adapter's registration key, so query by the stored site_id.
+        items = storage.get_items(site_id="stub_ig", limit=100)
+        storage.close()
+        by_id = {i.id: i for i in items}
+        assert _POST_ID in by_id, "post should be stored via SSR path"
+        assert _CMT_ID in by_id, "comment should be stored"
+        assert by_id[_CMT_ID].url == _POST_URL, "comment url should be backfilled to the post url"
+    finally:
+        _REGISTRY.pop("stub_post", None)

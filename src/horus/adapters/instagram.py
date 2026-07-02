@@ -5,6 +5,8 @@ Comments (top-level): /api/v1/media/<id>/comments/ — top-level only.
 Credentials: requires manual login (horus login instagram); no anonymous access.
 """
 
+import json
+import re
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -15,6 +17,34 @@ from horus.adapters.base import SiteAdapter
 from horus.models import ScrapedItem
 
 _TIMELINE_KEY = "xdt_api__v1__feed__user_timeline_graphql_connection"
+_WEB_INFO_KEY = "xdt_api__v1__media__shortcode__web_info"
+_POST_URL_RE = re.compile(r"/(?:p|reel)/([^/?#]+)")
+_JSON_SCRIPT_RE = re.compile(r'<script[^>]*type="application/json"[^>]*>(.*?)</script>', re.DOTALL)
+
+
+def post_code_from_url(url: str) -> str | None:
+    """Return the shortcode from an instagram /p/<code>/ or /reel/<code>/ URL, else None."""
+    m = _POST_URL_RE.search(url)
+    return m.group(1) if m else None
+
+
+def _find_web_info(obj: Any) -> dict[str, Any] | None:
+    """Depth-first search for the shortcode web_info node ({items:[...]})."""
+    if isinstance(obj, dict):
+        node = obj.get(_WEB_INFO_KEY)
+        if isinstance(node, dict):
+            return node
+        # key absent or not a dict → keep searching other branches
+        for v in obj.values():
+            found = _find_web_info(v)
+            if found is not None:
+                return found
+    elif isinstance(obj, list):
+        for v in obj:
+            found = _find_web_info(v)
+            if found is not None:
+                return found
+    return None
 
 
 def _parse_item(node: dict[str, Any]) -> ScrapedItem | None:
@@ -117,6 +147,29 @@ class InstagramAdapter(SiteAdapter):
             return False
 
         return _f
+
+    def is_post_url(self, url: str) -> bool:
+        return _POST_URL_RE.search(url) is not None
+
+    def extract_inline_items(self, html: str) -> dict[str, Any]:
+        """Pull the inlined shortcode web_info blob from a directly-navigated post page.
+
+        Direct navigation to /p/<code>/ inlines the post as
+        `xdt_api__v1__media__shortcode__web_info` (a {items:[...]} node) instead of firing an
+        interceptable XHR. Returns that node so parse_response's `items` branch handles it;
+        returns {} if not found.
+        """
+        for block in _JSON_SCRIPT_RE.findall(html):
+            if _WEB_INFO_KEY not in block:
+                continue
+            try:
+                data = json.loads(block)
+            except (ValueError, TypeError):
+                continue
+            node = _find_web_info(data)
+            if node is not None:
+                return node
+        return {}
 
     def get_urls(self, **kwargs: Any) -> list[str]:
         url = kwargs.get("url")

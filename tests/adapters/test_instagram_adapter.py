@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from horus.adapters.instagram import InstagramAdapter
+from horus.adapters.instagram import InstagramAdapter, post_code_from_url
 
 FIX = Path(__file__).parent.parent / "fixtures" / "instagram"
 
@@ -125,3 +125,50 @@ def test_registered() -> None:
 def test_comments_via_interception_flag() -> None:
     # load-bearing: cli.py routes --with-comments through interception based on this
     assert InstagramAdapter.comments_via_interception is True
+
+
+# ---------------------------------------------------------------------------
+# --url single-post support (SSR-inlined post)
+# ---------------------------------------------------------------------------
+
+
+def test_is_post_url() -> None:
+    a = InstagramAdapter()
+    assert a.is_post_url("https://www.instagram.com/p/DZtid4YJ4pX/")
+    assert a.is_post_url("https://www.instagram.com/reel/ABC123/")
+    assert not a.is_post_url("https://www.instagram.com/nasa/")
+    assert not a.is_post_url("https://www.instagram.com/")
+
+
+def test_post_code_from_url() -> None:
+    assert post_code_from_url("https://www.instagram.com/p/DZtid4YJ4pX/") == "DZtid4YJ4pX"
+    assert post_code_from_url("https://www.instagram.com/reel/ABC123/?x=1") == "ABC123"
+    assert post_code_from_url("https://www.instagram.com/nasa/") is None
+
+
+def test_extract_inline_items_from_ssr() -> None:
+    # A post page inlines the post as xdt_api__v1__media__shortcode__web_info ({items:[...]}),
+    # embedded in a <script type="application/json"> tag. Reuse the media_info fixture as the node.
+    a = InstagramAdapter()
+    web_info = _load("media_info.json")  # {"items": [...]}
+    blob = {"require": [], "xdt_api__v1__media__shortcode__web_info": web_info}
+    html = (
+        '<html><body><script type="application/json">'
+        + json.dumps(blob)
+        + "</script></body></html>"
+    )
+    extracted = a.extract_inline_items(html)
+    assert "items" in extracted
+    # parse_response's items branch turns it into the post
+    posts = a.parse_response(extracted)
+    assert posts and posts[0].site_id == "instagram"
+    assert posts[0].url.startswith("https://www.instagram.com/p/")
+    assert posts[0].extra["is_reply"] is False
+
+
+def test_extract_inline_items_absent() -> None:
+    a = InstagramAdapter()
+    assert a.extract_inline_items("<html><body>no inlined json here</body></html>") == {}
+    # present key but malformed JSON block → still {}
+    bad = '<script type="application/json">xdt_api__v1__media__shortcode__web_info {oops</script>'
+    assert a.extract_inline_items(bad) == {}

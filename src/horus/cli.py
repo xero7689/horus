@@ -296,17 +296,31 @@ async def _crawl(
                                 p for p in batch if not p.extra.get("is_reply", False)
                             )
 
+                    crawled_via_post_url = False
                     for url in urls:
                         console.print(f"Crawling [cyan]{url}[/cyan]...")
-                        await scraper.scrape(
-                            url,
-                            adapter.get_response_filter(),
-                            adapter.parse_response,
-                            state_path,
-                            since=since,
-                            on_progress=on_progress,
-                            on_batch=on_batch,
-                        )
+                        if use_intercept and adapter.is_post_url(url):
+                            # Single post: IG inlines the post as JSON in the page (direct
+                            # navigation fires no interceptable XHR), so pull it from SSR.
+                            crawled_via_post_url = True
+                            blob = await scraper.fetch_inline_json(
+                                url, adapter.extract_inline_items, state_path
+                            )
+                            items = adapter.parse_response(blob)
+                            if items:
+                                on_batch(items)
+                            else:
+                                console.print(f"  [yellow]No post data found at {url}[/yellow]")
+                        else:
+                            await scraper.scrape(
+                                url,
+                                adapter.get_response_filter(),
+                                adapter.parse_response,
+                                state_path,
+                                since=since,
+                                on_progress=on_progress,
+                                on_batch=on_batch,
+                            )
                         storage.log_crawl(site, url, total_found, total_new, started_at)
 
                     if with_comments and crawled_top_level:
@@ -345,8 +359,19 @@ async def _crawl(
                             def on_walk(done: int, total: int) -> None:
                                 console.print(f"  [dim]modal {done} — {total} responses[/dim]")
 
+                            # Single source of truth for IG shortcode extraction (this branch
+                            # is already Instagram-specific; see note above).
+                            from horus.adapters.instagram import post_code_from_url
+
                             for handle, posts in posts_by_profile.items():
                                 profile_url = f"https://www.instagram.com/{handle}/"
+                                # For a --url crawl, target those exact posts' thumbnails;
+                                # for --user, walk the first N recent thumbnails in grid order.
+                                target_codes = (
+                                    [c for p in posts if (c := post_code_from_url(p.url))]
+                                    if crawled_via_post_url
+                                    else None
+                                )
                                 try:
                                     raw = await scraper.scrape_comments_via_grid(
                                         profile_url,
@@ -354,6 +379,7 @@ async def _crawl(
                                         adapter.parse_response,
                                         state_path,
                                         max_posts=len(posts),
+                                        target_codes=target_codes,
                                         on_progress=on_walk,
                                     )
                                 except Exception as e:
