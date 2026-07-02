@@ -15,7 +15,8 @@ class SiteAdapter(ABC):
 
     To add a new site:
     1. Create src/horus/adapters/mysite.py, subclass SiteAdapter
-    2. Implement the 3 abstract methods
+    2. Implement get_urls() (the only abstract method); interception adapters also
+       override get_response_filter() and parse_response()
     3. In adapters/__init__.py, import and call register(MySiteAdapter)
 
     Mode flags (mutually exclusive):

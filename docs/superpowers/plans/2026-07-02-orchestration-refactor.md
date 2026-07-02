@@ -16,6 +16,7 @@
 1. cli shell's `except (ValueError, RuntimeError)` wraps the whole `run()` call, not just the http-mode `fetch_items()` as today (cli.py:217–222) — a ValueError raised inside page/intercept paths changes from traceback-crash to red-message + exit 1. Acceptable UX improvement.
 2. `read_stdin_lines(skip_comments=True)` strips lines **before** the `#` check; the old facebook/web code checked `startswith("#")` on the unstripped line, so `"  # x"` used to pass through as content. The new behavior (drop it) is the intended one.
 3. Serve loses two realtime signals (see Task 7): per-page `progress {"fetched","new"}` broadcasts, and mid-crawl `items_found` updates (now written once at the end). The per-URL `log` events still stream, so the UI stays live.
+4. Comment upsert error isolation (post-review addition): on dev, the threads HTML path ran `storage.upsert_items` **inside** the per-post try/except — a storage error was a warning + continue. Now the upsert lives in the orchestrator's consumer, outside the adapter's error isolation: a storage failure aborts the crawl. Intentional — storage breakage should not be swallowed as a per-post warning, and the fetch_comments contract makes the orchestrator sole owner of storage side effects.
 
 **Ground rules (from the architecture assessment):**
 

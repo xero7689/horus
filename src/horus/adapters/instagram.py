@@ -92,7 +92,7 @@ def _parse_comment(c: dict[str, Any]) -> ScrapedItem | None:
     return ScrapedItem(
         id=str(c.get("pk", "")),
         site_id="instagram",
-        url="",  # backfilled in cli.py from the parent post.url (comment body lacks shortcode)
+        url="",  # backfilled in fetch_comments() from the parent post.url (body lacks shortcode)
         text=c.get("text"),
         author_id=str(user.get("pk", "")) or None,
         author_name=user.get("username") or None,

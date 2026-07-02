@@ -85,7 +85,13 @@ class _JobReporter:
     def log(self, message: str) -> None:
         # Strip Rich markup for the web log (serve renders plain text). Use Rich's
         # own parser — a hand-rolled regex misses styles with punctuation/attributes.
-        plain = Text.from_markup(message).plain
+        # Messages interpolate unsanitized content (URLs, exception text): a stray
+        # "[/...]" would raise MarkupError and fail the whole job, so fall back to
+        # the raw string rather than let a log line kill the crawl.
+        try:
+            plain = Text.from_markup(message).plain
+        except Exception:
+            plain = message
         self._job.log.append(plain)
         self._job.broadcast("log", {"message": plain})
 
