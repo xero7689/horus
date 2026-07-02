@@ -11,7 +11,6 @@ Usage:
 
 import asyncio
 import sys
-from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -43,15 +42,8 @@ class SerperAdapter(SiteAdapter):
         # subclasses both AsyncBaseTransport and BaseTransport, so tests still work.
         self._transport = transport
 
-    # --- SiteAdapter abstract methods (unused in http mode) ---
-
-    def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
-        return lambda _url, _body: False
-
-    def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
-        return []
-
     def get_urls(self, **kwargs: Any) -> list[str]:
+        # get_urls is unused in http mode; queries resolved in fetch_items
         return [_SERPER_URL]
 
     def get_crawl_options(self) -> list[dict[str, Any]]:

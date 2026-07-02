@@ -32,15 +32,19 @@ class SiteAdapter(ABC):
     # True = --with-comments uses scrape() interception instead of scrape_comments() HTML parsing
     comments_via_interception: ClassVar[bool] = False
 
-    @abstractmethod
-    def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
-        """Return (response_url, response_body) -> bool filter function."""
-        ...
+    # Page-mode hooks (used only when has_page_mode=True); declared here so callers
+    # never need getattr — undeclared hooks are how serve drifted from cli.
+    wait_for_selector: ClassVar[str | None] = None
+    page_script: ClassVar[str | None] = None
+    content_script: ClassVar[str | None] = None
 
-    @abstractmethod
+    def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
+        """(response_url, response_body) -> bool. Override in interception adapters."""
+        return lambda _url, _body: False
+
     def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
-        """Parse an intercepted response body into ScrapedItems."""
-        ...
+        """Parse an intercepted response body. Override in interception adapters."""
+        return []
 
     @abstractmethod
     def get_urls(self, **kwargs: Any) -> list[str]:

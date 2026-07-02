@@ -10,7 +10,6 @@ Usage:
 
 import urllib.parse
 import urllib.request
-from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -48,14 +47,6 @@ class DuckDuckGoAdapter(SiteAdapter):
     requires_login = False
     has_http_mode = True
     description = "Search DuckDuckGo and store results (no browser needed)"
-
-    # --- SiteAdapter abstract methods (unused in http mode) ---
-
-    def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
-        return lambda _url, _body: False
-
-    def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
-        return []
 
     def get_urls(self, **kwargs: Any) -> list[str]:
         # get_urls is unused in http mode; queries resolved in fetch_items

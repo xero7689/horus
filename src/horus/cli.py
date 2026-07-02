@@ -230,9 +230,9 @@ async def _crawl(
             async with BaseScraper(**scraper_kwargs) as scraper:
                 if adapter_cls.has_page_mode:
                     # Page-based path: HTML → Markdown
-                    wait_for = getattr(adapter_cls, "wait_for_selector", None)
-                    page_script = getattr(adapter_cls, "page_script", None)
-                    content_script = getattr(adapter_cls, "content_script", None)
+                    wait_for = adapter_cls.wait_for_selector
+                    page_script = adapter_cls.page_script
+                    content_script = adapter_cls.content_script
                     for url in urls:
                         console.print(f"Fetching [cyan]{url}[/cyan]...")
                         page = await scraper.scrape_page(

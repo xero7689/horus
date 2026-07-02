@@ -1,10 +1,8 @@
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from horus.adapters._io import read_stdin_lines
 from horus.adapters.base import SiteAdapter
-from horus.models import ScrapedItem
 
 
 class GenericWebAdapter(SiteAdapter):
@@ -22,14 +20,6 @@ class GenericWebAdapter(SiteAdapter):
     requires_login = False
     has_page_mode = True
     description = "Crawl any public webpage and convert HTML to Markdown"
-
-    def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
-        # Page-mode adapter: never intercept responses
-        return lambda _url, _body: False
-
-    def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
-        # Page-mode adapter: parsing is done via page.content(), not response interception
-        return []
 
     def get_urls(self, **kwargs: Any) -> list[str]:
         url: str | None = kwargs.get("url")
