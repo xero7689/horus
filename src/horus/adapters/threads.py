@@ -68,6 +68,9 @@ def _parse_item(
     )
 
 
+_POST_URL_RE = re.compile(r"threads\.(?:net|com)/@[^/]+/post/[^/?#]+")
+
+
 def _extract_thread_items_arrays(html: str) -> list[list[dict[str, Any]]]:
     """Extract all thread_items arrays from SSR HTML using bracket-balanced parsing."""
     results: list[list[dict[str, Any]]] = []
@@ -163,6 +166,25 @@ class ThreadsAdapter(SiteAdapter):
             return "graphql" in url and "mediaData" in str(body.get("data", {}).keys())
 
         return filter_fn
+
+    def is_post_url(self, url: str) -> bool:
+        return _POST_URL_RE.search(url) is not None
+
+    def extract_inline_items(self, html: str) -> dict[str, Any]:
+        """Pull the inlined thread from a directly-navigated post page.
+
+        Threads post pages inline the thread as SSR ``thread_items`` arrays and fire
+        no mediaData GraphQL XHR (same pattern as Instagram's inlined single post).
+        The first array is the post's containing thread (the same assumption
+        ``parse_comments_from_html`` relies on); later arrays are comment groups and
+        are left to the --with-comments path. Returns a synthesized mediaData body so
+        ``parse_response`` handles it unchanged: a standalone post parses in posts
+        mode, a mid-thread post (2+ thread_items) in replies mode with linkage.
+        """
+        arrays = _extract_thread_items_arrays(html)
+        if not arrays:
+            return {}
+        return {"data": {"mediaData": {"edges": [{"node": {"thread_items": arrays[0]}}]}}}
 
     def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
         """Parse posts OR replies depending on response structure.

@@ -336,3 +336,44 @@ class TestParseCommentsFromHtml:
         html = _make_ssr_html([original_post, dup, dup])
         items = parse_comments_from_html(html, post_pk="111")
         assert len(items) == 1
+
+
+class TestPostUrlSsr:
+    """--url single-post support: threads post pages inline thread_items (no matching XHR)."""
+
+    def setup_method(self) -> None:
+        self.adapter = ThreadsAdapter()
+
+    def test_is_post_url(self) -> None:
+        assert self.adapter.is_post_url("https://www.threads.net/@alice/post/DZ79_o3mjX6")
+        assert self.adapter.is_post_url("https://www.threads.com/@alice/post/ABC123?x=1")
+        assert not self.adapter.is_post_url("https://www.threads.net/@alice")
+        assert not self.adapter.is_post_url("https://www.threads.net/@alice/replies")
+
+    def test_extract_inline_items_takes_first_array_only(self) -> None:
+        # First array = the post's containing thread; later arrays are comment
+        # groups and must NOT leak into the synthesized posts payload.
+        post = [_make_post_item("111", "alice", "Original")]
+        comments = [_make_post_item("222", "bob", "Comment", reply_to_username="alice")]
+        html = _make_ssr_html([post, comments])
+        body = self.adapter.extract_inline_items(html)
+        items = self.adapter.parse_response(body)
+        assert [i.id for i in items] == ["111"]
+        assert items[0].extra["is_reply"] is False
+
+    def test_extract_inline_items_mid_thread_uses_replies_mode(self) -> None:
+        # A post that is itself a reply: containing thread has 2+ items →
+        # parse_response replies-mode links parent/conversation ids.
+        thread = [
+            _make_post_item("111", "alice", "Root"),
+            _make_post_item("222", "bob", "Reply", reply_to_username="alice"),
+        ]
+        html = _make_ssr_html([thread])
+        body = self.adapter.extract_inline_items(html)
+        items = self.adapter.parse_response(body)
+        assert {i.id for i in items} == {"111", "222"}
+        by_id = {i.id: i for i in items}
+        assert by_id["222"].extra["is_reply"] is True
+
+    def test_extract_inline_items_no_thread_data(self) -> None:
+        assert self.adapter.extract_inline_items("<html>nothing here</html>") == {}
