@@ -10,11 +10,14 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from rich.text import Text
+
 from horus.adapters import get_adapter
 from horus.config import Settings
+from horus.core.dates import parse_since
+from horus.core.orchestrator import CrawlOrchestrator
 from horus.core.scraper import BaseScraper
 from horus.core.storage import HorusStorage
-from horus.models import ScrapedItem
 
 
 class JobStatus(StrEnum):
@@ -73,6 +76,31 @@ class CrawlJob:
         }
 
 
+class _JobReporter:
+    """Bridges CrawlReporter events onto a CrawlJob (SSE + log)."""
+
+    def __init__(self, job: CrawlJob) -> None:
+        self._job = job
+
+    def log(self, message: str) -> None:
+        # Strip Rich markup for the web log (serve renders plain text). Use Rich's
+        # own parser — a hand-rolled regex misses styles with punctuation/attributes.
+        # Messages interpolate unsanitized content (URLs, exception text): a stray
+        # "[/...]" would raise MarkupError and fail the whole job, so fall back to
+        # the raw string rather than let a log line kill the crawl.
+        try:
+            plain = Text.from_markup(message).plain
+        except Exception:
+            plain = message
+        self._job.log.append(plain)
+        self._job.broadcast("log", {"message": plain})
+
+    def progress(self, scroll: int, total: int) -> None:
+        self._job.broadcast("progress", {"scroll": scroll, "total": total})
+
+    def emit(self, item: Any) -> None: ...  # serve does not stream items
+
+
 class CrawlerManager:
     """Manages background crawl jobs. One instance per server lifetime."""
 
@@ -113,106 +141,43 @@ class CrawlerManager:
         job.broadcast("status", {"status": "running"})
 
         storage = HorusStorage(self._settings.resolved_db_path)
-        started_at = datetime.now(UTC)
 
         try:
             adapter_cls = get_adapter(job.site)
             adapter = adapter_cls()
 
-            scraper_kwargs: dict[str, Any] = {
-                "headless": self._settings.headless,
-                "scroll_delay_min": self._settings.scroll_delay_min,
-                "scroll_delay_max": self._settings.scroll_delay_max,
-                "request_jitter": self._settings.request_jitter,
-                "max_pages": self._settings.max_pages,
-            }
+            # http-mode adapters may not implement get_urls (the http path never
+            # uses URLs) — do not call it for them.
+            urls: list[str] = [] if adapter_cls.has_http_mode else adapter.get_urls(**job.kwargs)
 
-            if adapter_cls.has_http_mode:
-                # Direct HTTP path (e.g. DDG)
-                msg = f"Fetching via HTTP: {job.site}"
-                job.log.append(msg)
-                job.broadcast("log", {"message": msg})
+            since_dt = None
+            if since:
+                try:
+                    since_dt = parse_since(since)
+                except ValueError:
+                    pass  # serve keeps silent-fallback semantics (documented divergence)
 
-                # Forward the serve UI's `limit` into http-mode adapters (mirrors the
-                # CLI fix). job.kwargs wins on collision so an explicit per-job limit
-                # takes precedence.
-                http_kwargs = {"limit": limit, **job.kwargs}
-                items = await adapter.fetch_items(**http_kwargs)
-                items = adapter.post_process(items)
-                new_count = storage.upsert_items(items)
-                job.items_found = len(items)
-                job.items_new = new_count
-                storage.log_crawl(
-                    job.site, str(job.kwargs), job.items_found, job.items_new, started_at
-                )
+            raw_path = self._settings.state_path_for(job.site)
+            state_path = raw_path if raw_path.exists() else None
 
-            elif adapter_cls.has_page_mode:
-                # Page-mode path (HTML → Markdown)
-                urls = adapter.get_urls(**job.kwargs)
-                async with BaseScraper(**scraper_kwargs) as scraper:
-                    _sp = self._settings.state_path_for(job.site)
-                    state_path = _sp if _sp.exists() else None
-                    for url in urls:
-                        msg = f"Fetching page: {url}"
-                        job.log.append(msg)
-                        job.broadcast("log", {"message": msg})
-                        page = await scraper.scrape_page(url, state_path, site_id=job.site)
-                        is_new = storage.upsert_page(page)
-                        job.items_found += 1
-                        job.items_new += int(is_new)
-                        job.broadcast(
-                            "progress", {"fetched": job.items_found, "new": job.items_new}
-                        )
-                storage.log_crawl(
-                    job.site,
-                    urls[0] if len(urls) == 1 else f"{len(urls)} URLs",
-                    job.items_found,
-                    job.items_new,
-                    started_at,
-                )
-
-            else:
-                # Response-intercept path (Threads etc.)
-                urls = adapter.get_urls(**job.kwargs)
-                since_dt = None
-                if since:
-                    from datetime import datetime as dt
-
-                    try:
-                        since_dt = dt.fromisoformat(since).replace(tzinfo=UTC)
-                    except ValueError:
-                        pass
-                if since_dt is None:
-                    since_dt = storage.get_latest_timestamp(job.site)
-
-                raw_path = self._settings.state_path_for(job.site)
-                state_path = raw_path if raw_path.exists() else None
-
-                async with BaseScraper(**scraper_kwargs) as scraper:
-                    for url in urls:
-                        msg = f"Crawling: {url}"
-                        job.log.append(msg)
-                        job.broadcast("log", {"message": msg})
-
-                        def on_progress(scroll: int, total: int) -> None:
-                            job.items_found = total
-                            job.broadcast("progress", {"scroll": scroll, "total": total})
-
-                        def on_batch(batch: list[ScrapedItem]) -> None:
-                            batch = adapter.post_process(batch)
-                            new_count = storage.upsert_items(batch)
-                            job.items_new += new_count
-
-                        await scraper.scrape(
-                            url,
-                            adapter.get_response_filter(),
-                            adapter.parse_response,
-                            state_path,
-                            since=since_dt,
-                            on_progress=on_progress,
-                            on_batch=on_batch,
-                        )
-                        storage.log_crawl(job.site, url, job.items_found, job.items_new, started_at)
+            orchestrator = CrawlOrchestrator(
+                storage,
+                self._settings,
+                scraper_cls=BaseScraper,  # module-level name: patchable in tests like cli
+                reporter=_JobReporter(job),
+            )
+            outcome = await orchestrator.run(
+                adapter,
+                urls,
+                adapter_cls=adapter_cls,
+                site=job.site,
+                kwargs=job.kwargs,
+                limit=limit,
+                since=since_dt,
+                state_path=state_path,
+            )
+            job.items_found = outcome.total_found
+            job.items_new = outcome.total_new
 
             job.status = JobStatus.DONE
             job.broadcast("done", {"items_found": job.items_found, "items_new": job.items_new})

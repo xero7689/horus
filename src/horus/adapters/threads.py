@@ -1,10 +1,10 @@
 import json
 import re
-import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from horus.adapters._io import read_stdin_lines
 from horus.adapters._meta import _MEDIA_TYPE_MAP, _extract_media_urls
 from horus.adapters.base import SiteAdapter
 from horus.models import ScrapedItem
@@ -246,15 +246,11 @@ class ThreadsAdapter(SiteAdapter):
             if mode == "replies":
                 return [f"https://www.threads.net/@{username}/replies"]
             return [f"https://www.threads.net/@{username}"]
-        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
-            try:
-                usernames = [line.strip().lstrip("@") for line in sys.stdin if line.strip()]
-            except OSError:
-                usernames = []
-            if usernames:
-                if mode == "replies":
-                    return [f"https://www.threads.net/@{u}/replies" for u in usernames]
-                return [f"https://www.threads.net/@{u}" for u in usernames]
+        usernames = [ln.lstrip("@") for ln in read_stdin_lines()]
+        if usernames:
+            if mode == "replies":
+                return [f"https://www.threads.net/@{u}/replies" for u in usernames]
+            return [f"https://www.threads.net/@{u}" for u in usernames]
         raise ValueError("threads adapter requires --user or --url")
 
     def get_comment_parser(self) -> "CommentParser":

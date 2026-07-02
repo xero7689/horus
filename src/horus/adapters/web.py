@@ -1,10 +1,8 @@
-import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from horus.adapters._io import read_stdin_lines
 from horus.adapters.base import SiteAdapter
-from horus.models import ScrapedItem
 
 
 class GenericWebAdapter(SiteAdapter):
@@ -23,14 +21,6 @@ class GenericWebAdapter(SiteAdapter):
     has_page_mode = True
     description = "Crawl any public webpage and convert HTML to Markdown"
 
-    def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
-        # Page-mode adapter: never intercept responses
-        return lambda _url, _body: False
-
-    def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
-        # Page-mode adapter: parsing is done via page.content(), not response interception
-        return []
-
     def get_urls(self, **kwargs: Any) -> list[str]:
         url: str | None = kwargs.get("url")
         url_list: str | None = kwargs.get("url_list")
@@ -46,15 +36,9 @@ class GenericWebAdapter(SiteAdapter):
             if not urls:
                 raise ValueError(f"No URLs found in {url_list}")
             return urls
-        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
-            try:
-                lines = [
-                    line.strip() for line in sys.stdin if line.strip() and not line.startswith("#")
-                ]
-                if lines:
-                    return lines
-            except OSError:
-                pass
+        lines = read_stdin_lines(skip_comments=True)
+        if lines:
+            return lines
         raise ValueError("web adapter requires --url or --url-list")
 
     def get_crawl_options(self) -> list[dict[str, Any]]:

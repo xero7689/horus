@@ -10,14 +10,13 @@ Usage:
 """
 
 import asyncio
-import hashlib
 import sys
-from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
+from horus.adapters._io import read_stdin_lines, stable_item_id
 from horus.adapters.base import SiteAdapter
 from horus.config import Settings
 from horus.models import ScrapedItem
@@ -25,12 +24,6 @@ from horus.models import ScrapedItem
 _SERPER_URL = "https://google.serper.dev/search"
 _DEFAULT_GL = "tw"
 _DEFAULT_HL = "zh-tw"
-
-
-def _make_item_id(url: str, query: str) -> str:
-    """Stable ID: SHA-1 of (url, query) truncated to 16 hex chars."""
-    digest = hashlib.sha1(f"{url}|{query}".encode()).hexdigest()  # nosec B324
-    return digest[:16]
 
 
 class SerperAdapter(SiteAdapter):
@@ -49,15 +42,8 @@ class SerperAdapter(SiteAdapter):
         # subclasses both AsyncBaseTransport and BaseTransport, so tests still work.
         self._transport = transport
 
-    # --- SiteAdapter abstract methods (unused in http mode) ---
-
-    def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
-        return lambda _url, _body: False
-
-    def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
-        return []
-
     def get_urls(self, **kwargs: Any) -> list[str]:
+        # get_urls is unused in http mode; queries resolved in fetch_items
         return [_SERPER_URL]
 
     def get_crawl_options(self) -> list[dict[str, Any]]:
@@ -91,7 +77,7 @@ class SerperAdapter(SiteAdapter):
                 continue
             items.append(
                 ScrapedItem(
-                    id=_make_item_id(url, query),
+                    id=stable_item_id(url, query),
                     site_id="serper",
                     url=url,
                     text=title,
@@ -115,13 +101,9 @@ class SerperAdapter(SiteAdapter):
         query: str | None = kwargs.get("query")
         if query:
             return [query]
-        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
-            try:
-                lines = [line.strip() for line in sys.stdin if line.strip()]
-            except OSError:
-                lines = []
-            if lines:
-                return lines
+        lines = read_stdin_lines()
+        if lines:
+            return lines
         raise ValueError("serper adapter requires --query")
 
     async def fetch_items(self, **kwargs: Any) -> list[ScrapedItem]:

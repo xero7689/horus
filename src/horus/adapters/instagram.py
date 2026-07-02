@@ -7,14 +7,19 @@ Credentials: requires manual login (horus login instagram); no anonymous access.
 
 import json
 import re
-import sys
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from horus.adapters._io import read_stdin_lines
 from horus.adapters._meta import _MEDIA_TYPE_MAP, _extract_media_urls
 from horus.adapters.base import SiteAdapter
 from horus.models import ScrapedItem
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from horus.core.scraper import BaseScraper
 
 _TIMELINE_KEY = "xdt_api__v1__feed__user_timeline_graphql_connection"
 _WEB_INFO_KEY = "xdt_api__v1__media__shortcode__web_info"
@@ -87,7 +92,7 @@ def _parse_comment(c: dict[str, Any]) -> ScrapedItem | None:
     return ScrapedItem(
         id=str(c.get("pk", "")),
         site_id="instagram",
-        url="",  # backfilled in cli.py from the parent post.url (comment body lacks shortcode)
+        url="",  # backfilled in fetch_comments() from the parent post.url (body lacks shortcode)
         text=c.get("text"),
         author_id=str(user.get("pk", "")) or None,
         author_name=user.get("username") or None,
@@ -110,7 +115,63 @@ class InstagramAdapter(SiteAdapter):
     login_url = "https://www.instagram.com/accounts/login/"
     requires_login = True
     description = "Scrape Instagram posts + top-level comments via GraphQL/XHR interception"
-    comments_via_interception = True
+
+    async def fetch_comments(
+        self,
+        scraper: "BaseScraper",
+        posts: list[ScrapedItem],
+        state_path: "Path | None",
+        *,
+        via_post_url: bool = False,
+        on_event: Callable[[str], None] | None = None,
+    ) -> AsyncIterator[tuple[ScrapedItem, list[ScrapedItem]]]:
+        # IG comments only fire when a post is opened as an in-app MODAL from the
+        # profile grid (direct /p/<code>/ navigation inlines the post and fires
+        # nothing). So walk each author's grid once, clicking thumbnails, then
+        # attribute comments by media_id == post pk.
+        posts_by_profile: dict[str, list[ScrapedItem]] = {}
+        for post in posts:
+            handle = (post.author_name or "").lstrip("@")
+            if handle:
+                posts_by_profile.setdefault(handle, []).append(post)
+
+        for handle, profile_posts in posts_by_profile.items():
+            profile_url = f"https://www.instagram.com/{handle}/"
+            # For a --url crawl, target those exact posts' thumbnails;
+            # for --user, walk the first N recent thumbnails in grid order.
+            target_codes = (
+                [c for p in profile_posts if (c := post_code_from_url(p.url))]
+                if via_post_url
+                else None
+            )
+            on_walk = (
+                (lambda done, total: on_event(f"  [dim]modal {done} — {total} responses[/dim]"))
+                if on_event
+                else None
+            )
+            try:
+                raw = await scraper.scrape_comments_via_grid(
+                    profile_url,
+                    self.get_response_filter(),
+                    self.parse_response,
+                    state_path,
+                    max_posts=len(profile_posts),
+                    target_codes=target_codes,
+                    on_progress=on_walk,
+                )
+            except Exception as e:  # noqa: BLE001 — one bad profile must not kill the walk
+                if on_event:
+                    on_event(f"  [yellow]Warning: comment walk failed for @{handle}: {e}[/yellow]")
+                continue
+            comments_by_media: dict[str, list[ScrapedItem]] = {}
+            for c in raw:
+                if c.extra.get("is_reply"):
+                    comments_by_media.setdefault(c.extra.get("parent_post_id", ""), []).append(c)
+            for post in profile_posts:
+                cs = comments_by_media.get(post.id, [])
+                for c in cs:
+                    c.url = post.url  # backfill (comment body lacks shortcode)
+                yield post, cs
 
     def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
         # 1. Timeline (GraphQL connection)
@@ -178,13 +239,9 @@ class InstagramAdapter(SiteAdapter):
         user = kwargs.get("user")
         if user:
             return [f"https://www.instagram.com/{user.lstrip('@')}/"]
-        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
-            try:
-                users = [ln.strip().lstrip("@") for ln in sys.stdin if ln.strip()]
-            except OSError:
-                users = []
-            if users:
-                return [f"https://www.instagram.com/{u}/" for u in users]
+        users = [ln.lstrip("@") for ln in read_stdin_lines()]
+        if users:
+            return [f"https://www.instagram.com/{u}/" for u in users]
         raise ValueError("instagram adapter requires --user or --url")
 
     def get_crawl_options(self) -> list[dict[str, Any]]:

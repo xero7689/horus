@@ -12,11 +12,11 @@ Schema notes (see docs/superpowers/plans/2026-05-31-twitter-adapter.md):
 - the pinned tweet arrives in a separate TimelinePinEntry instruction
 """
 
-import sys
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
+from horus.adapters._io import read_stdin_lines
 from horus.adapters.base import SiteAdapter
 from horus.models import ScrapedItem
 
@@ -290,13 +290,9 @@ class TwitterAdapter(SiteAdapter):
             return [url]
         if user:
             return [self._profile_url(user, mode)]
-        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
-            try:
-                usernames = [line.strip().lstrip("@") for line in sys.stdin if line.strip()]
-            except OSError:
-                usernames = []
-            if usernames:
-                return [self._profile_url(u, mode) for u in usernames]
+        usernames = [ln.lstrip("@") for ln in read_stdin_lines()]
+        if usernames:
+            return [self._profile_url(u, mode) for u in usernames]
         raise ValueError("twitter adapter requires --user or --url")
 
     @staticmethod

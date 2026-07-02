@@ -14,21 +14,24 @@
 
 ```
 src/horus/
-├── cli.py              # Click CLI（login, crawl, list-sites, show, search, pages, export, stats）
+├── cli.py              # Click CLI（login, crawl, list-sites, show, search, pages, export, stats）；crawl 是 CrawlOrchestrator 的 thin shell
 ├── config.py           # Settings（HORUS_* env vars，~/.horus/ 路徑管理）
 ├── models.py           # ScrapedItem, ScrapedPage, CrawlResult, SiteAdapterConfig
 ├── serp_eval.py        # 純函式 SERP 比對指標（normalize_url, overlap_at_k, rbo）
 ├── core/
 │   ├── browser.py      # BaseBrowser（Playwright 生命週期，save_login_state）
 │   ├── scraper.py      # BaseScraper（scrape：scroll + response intercept；scrape_page：HTML → Markdown）
+│   ├── orchestrator.py # CrawlOrchestrator（http/page/intercept 三向 dispatch + 儲存副作用；cli/serve 共用）
+│   ├── dates.py        # parse_since（cli/serve 共用，raises ValueError）
 │   └── storage.py      # HorusStorage（SQLite + FTS5；items + pages 兩張表）
 └── adapters/
-    ├── base.py         # SiteAdapter ABC（has_page_mode / comments_via_interception flags + 3 abstract methods）
+    ├── base.py         # SiteAdapter ABC（mode flags + page-mode hooks + fetch_comments() hook；get_urls 唯一 abstract）
     ├── __init__.py     # Registry（register, get_adapter, list_adapters）
+    ├── _io.py          # 共用 I/O helpers（read_stdin_lines, stable_item_id）
     ├── _meta.py        # 共用 Meta 媒體解析（_MEDIA_TYPE_MAP, _extract_media_urls；threads/instagram 共用）
     ├── threads.py      # Threads adapter（GraphQL 攔截）
     ├── twitter.py      # Twitter/X adapter（GraphQL 攔截，anonymous 可用）
-    ├── instagram.py    # Instagram adapter（GraphQL/XHR 攔截，貼文 + 頂層留言，comments_via_interception=True）
+    ├── instagram.py    # Instagram adapter（GraphQL/XHR 攔截，貼文 + 頂層留言，fetch_comments() override（profile-grid modal walk））
     ├── web.py          # GenericWebAdapter（任意公開網頁 → Markdown，has_page_mode=True）
     └── serper.py       # Serper adapter（Google Search via httpx，has_http_mode=True）
 tests/
@@ -79,10 +82,11 @@ horus stats                                      # 統計資訊
 
 ## 新增 Site Adapter（3 步驟）
 
-1. 建立 `src/horus/adapters/mysite.py`，繼承 `SiteAdapter`，實作 3 個 abstract method：
-   - `get_response_filter()` → `(url, body) -> bool`：過濾攔截的 HTTP response
-   - `parse_response(body)` → `list[ScrapedItem]`：解析成通用格式
-   - `get_urls(**kwargs)` → `list[str]`：根據 CLI 參數產生 URL 列表
+1. 建立 `src/horus/adapters/mysite.py`，繼承 `SiteAdapter`，實作 `get_urls()`（唯一 abstract）；
+   interception adapter 另覆寫兩個 default method：
+   - `get_urls(**kwargs)` → `list[str]`：根據 CLI 參數產生 URL 列表（**abstract，必須實作**）
+   - `get_response_filter()` → `(url, body) -> bool`：過濾攔截的 HTTP response（default 全拒）
+   - `parse_response(body)` → `list[ScrapedItem]`：解析成通用格式（default 回空 list）
 
 2. 在 `src/horus/adapters/__init__.py` 加：
    ```python
@@ -94,6 +98,9 @@ horus stats                                      # 統計資訊
 
 ## 關鍵設計
 
+- **CrawlOrchestrator**：`core/orchestrator.py` 是 crawl 編排的單一實作（http / page / intercept
+  三向 dispatch、儲存副作用、留言抓取）；cli 與 serve 都是 thin shell，只差 `CrawlReporter` 實作
+  （Rich console + stdout JSONL vs SSE broadcast + job log）
 - **ScrapedItem.extra**：site-specific 欄位存 JSON dict，避免多表 migration
 - **response_filter 簽名**：`(url: str, body: dict) -> bool`，雙重過濾（URL pattern + body 結構）
 - **State 儲存**：`~/.horus/states/<site_id>.json`，per-site Playwright storage_state
@@ -163,12 +170,12 @@ uv run horus --help                    # 確認 CLI 可用
   - `--url <post>`（`/p/<code>/` 或 `/reel/<code>/`）→ 直接導航不 fire 可攔截 XHR，改走 **SSR-JSON**：
     `extract_inline_items()` 從頁面 `<script type=application/json>` 抽出 inline 的
     `xdt_api__v1__media__shortcode__web_info`（`{items:[...]}` 節點），交給 `parse_response` 的 items 分支。
-    cli 對 interception adapter 的 post URL 走 `scraper.fetch_inline_json()`，非 post URL 走 `scrape()`。
+    orchestrator 對 interception adapter 的 post URL 走 `scraper.fetch_inline_json()`，非 post URL 走 `scrape()`。
 - **`--with-comments`：只抓頂層留言**（不抓 reply 的 reply）。留言只存媒體 URL（同 threads）。
-- **留言擷取機制（`comments_via_interception=True`，實機驗證過）**：IG 留言只在「從 profile grid
+- **留言擷取機制（`fetch_comments()` override（profile-grid modal walk），實機驗證過）**：IG 留言只在「從 profile grid
   **點縮圖開 in-app modal**」時才 fire `/api/v1/media/<id>/comments/`；直接導航貼文頁**不會** fire。因此：
-  - 主爬 `on_batch` **一律丟棄** `is_reply` 項目（即使沒帶 `--with-comments`），防止 `url=""` 留言誤落地。
-  - `--with-comments` 時，cli 依貼文 `author_name` 推出 profile URL，呼叫
+  - 主爬 `on_batch` **一律丟棄** `url=""` 的 `is_reply` 項目（即使沒帶 `--with-comments`），防止留言誤落地。
+  - `--with-comments` 時，adapter 的 `fetch_comments()` 依貼文 `author_name` 推出 profile URL，呼叫
     `scraper.scrape_comments_via_grid(profile_url, ...)`：載入 profile → 開 modal → 攔留言，
     再以 `parent_post_id == 貼文 pk` 歸屬（杜絕跨貼文誤掛）、回填 `url = 貼文 URL` 後才存。
     - `--user` 模式：`target_codes=None` → 點 grid 首屏前 N 個縮圖（依序，近期貼文）。
