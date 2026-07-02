@@ -358,3 +358,100 @@ def test_ig_no_with_comments_drops_comments(monkeypatch: Any, tmp_path: Any) -> 
     ids = {item.id for item in items}
     assert _POST_ID in ids, "post should be stored"
     assert _CMT_ID not in ids, "comment must NOT be stored without --with-comments"
+
+
+def test_ig_multi_profile_walks_each_profile(monkeypatch: Any, tmp_path: Any) -> None:
+    """Two crawled posts from different profiles → one grid walk per profile, each
+    attributing its own comments. Locks in the multi-profile grouping fix.
+    """
+    monkeypatch.setenv("HORUS_DB_PATH", str(tmp_path / "t.db"))
+
+    post_a = ScrapedItem(
+        id="POSTA",
+        site_id="stub_ig",
+        url="https://www.instagram.com/p/aaa/",
+        author_name="nasa",
+        timestamp=_TS,
+        extra={"is_reply": False, "parent_post_id": None},
+    )
+    post_b = ScrapedItem(
+        id="POSTB",
+        site_id="stub_ig",
+        url="https://www.instagram.com/p/bbb/",
+        author_name="spacex",
+        timestamp=_TS,
+        extra={"is_reply": False, "parent_post_id": None},
+    )
+    cmt_a = ScrapedItem(
+        id="CMTA",
+        site_id="stub_ig",
+        url="",
+        timestamp=_TS,
+        extra={"is_reply": True, "parent_post_id": "POSTA"},
+    )
+    cmt_b = ScrapedItem(
+        id="CMTB",
+        site_id="stub_ig",
+        url="",
+        timestamp=_TS,
+        extra={"is_reply": True, "parent_post_id": "POSTB"},
+    )
+
+    async def _scrape(
+        url,
+        response_filter,
+        parser,
+        state_path=None,
+        *,
+        since=None,
+        on_progress=None,
+        on_batch=None,
+    ):  # type: ignore[no-untyped-def]
+        if on_batch:
+            on_batch([post_a, post_b])
+        return [post_a, post_b]
+
+    async def _grid_walk(
+        profile_url,
+        response_filter,
+        parser,
+        state_path=None,
+        *,
+        max_posts=12,
+        thumbnail_selector="",
+        on_progress=None,
+    ):  # type: ignore[no-untyped-def]
+        # return each profile's own comment
+        if "nasa" in profile_url:
+            return [cmt_a]
+        if "spacex" in profile_url:
+            return [cmt_b]
+        return []
+
+    scraper_mock = MagicMock()
+    scraper_mock.__aenter__ = AsyncMock(return_value=scraper_mock)
+    scraper_mock.__aexit__ = AsyncMock(return_value=None)
+    scraper_mock.scrape = AsyncMock(side_effect=_scrape)
+    scraper_mock.scrape_comments = AsyncMock(return_value=[])
+    scraper_mock.scrape_comments_via_grid = AsyncMock(side_effect=_grid_walk)
+
+    with patch("horus.cli.BaseScraper", return_value=scraper_mock):
+        result = CliRunner().invoke(
+            main,
+            ["crawl", "stub_ig", "--url", "https://www.instagram.com/p/aaa/", "--with-comments"],
+        )
+
+    assert result.exit_code == 0, result.output
+
+    # one grid walk per profile, each with the right profile URL
+    assert scraper_mock.scrape_comments_via_grid.call_count == 2
+    walked = {call.args[0] for call in scraper_mock.scrape_comments_via_grid.call_args_list}
+    assert any("nasa" in u for u in walked) and any("spacex" in u for u in walked)
+
+    storage = HorusStorage(tmp_path / "t.db")
+    items = storage.get_items(site_id="stub_ig", limit=100)
+    storage.close()
+    by_id = {i.id: i for i in items}
+
+    assert "CMTA" in by_id and by_id["CMTA"].url == "https://www.instagram.com/p/aaa/"
+    assert "CMTB" in by_id and by_id["CMTB"].url == "https://www.instagram.com/p/bbb/"

@@ -274,10 +274,10 @@ async def _crawl(
 
                     def on_batch(batch: list[ScrapedItem]) -> None:
                         nonlocal total_found, total_new
-                        # comments_via_interception: navigating a post page auto-triggers the
-                        # comments XHR, so replies (url="") leak into the primary batch. Drop
-                        # them here; they are persisted only via the --with-comments backfill
-                        # loop (and never persisted at all without --with-comments).
+                        # Defensive: the IG profile timeline never yields replies today (comments
+                        # only fire on modal-open, not during the primary grid crawl). Drop any
+                        # is_reply items so a future inline-comment payload can't land with url=""
+                        # ahead of the --with-comments backfill (and never persists without it).
                         if use_intercept:
                             batch = [p for p in batch if not p.extra.get("is_reply", False)]
                         if not batch:
@@ -327,15 +327,24 @@ async def _crawl(
                             )
 
                         if use_intercept:
-                            # Instagram: comments only fire when a post is opened as an in-app
-                            # MODAL from the profile grid (direct /p/<code>/ navigation inlines
-                            # the post and fires nothing). So walk each profile's grid once,
-                            # clicking thumbnails, then attribute comments by media_id == post pk.
+                            # NOTE: this branch is Instagram-specific. `comments_via_interception`
+                            # currently means "IG profile-grid modal walk" — the instagram.com
+                            # profile URL and grid semantics are assumed here. A future adapter
+                            # setting the flag would need this generalised (e.g. adapter-supplied
+                            # profile URL + thumbnail selector).
+                            # IG comments only fire when a post is opened as an in-app MODAL from
+                            # the profile grid (direct /p/<code>/ navigation inlines the post and
+                            # fires nothing). So walk each profile's grid once, clicking
+                            # thumbnails, then attribute comments by media_id == post pk.
                             posts_by_profile: dict[str, list[ScrapedItem]] = {}
                             for post in crawled_top_level:
                                 handle = (post.author_name or "").lstrip("@")
                                 if handle:
                                     posts_by_profile.setdefault(handle, []).append(post)
+
+                            def on_walk(done: int, total: int) -> None:
+                                console.print(f"  [dim]modal {done} — {total} responses[/dim]")
+
                             for handle, posts in posts_by_profile.items():
                                 profile_url = f"https://www.instagram.com/{handle}/"
                                 try:
@@ -345,6 +354,7 @@ async def _crawl(
                                         adapter.parse_response,
                                         state_path,
                                         max_posts=len(posts),
+                                        on_progress=on_walk,
                                     )
                                 except Exception as e:
                                     console.print(
