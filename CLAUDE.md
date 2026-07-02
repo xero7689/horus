@@ -56,8 +56,7 @@ horus crawl twitter --user @NASA --mode replies  # 爬 X 回覆
 horus crawl twitter --url https://x.com/NASA/status/123  # 爬單一貼文/串
 horus login instagram                            # 開 browser 手動登入（建議分身帳號），存 states/instagram.json
 horus crawl instagram --user @nasa               # 爬 IG profile 貼文（需登入）
-horus crawl instagram --url https://www.instagram.com/p/ABC/  # 爬單一貼文
-horus crawl instagram --url https://www.instagram.com/p/ABC/ --with-comments  # 連頂層留言一起爬
+horus crawl instagram --user @nasa --with-comments  # 貼文 + grid 首頁各貼的頂層留言（modal walk）
 horus crawl web --url https://example.com        # 爬公開網頁，存 pages 表
 horus crawl web --url https://example.com --output ./pages/   # 同時輸出 .md 檔
 horus crawl web --url-list urls.txt --output ./pages/          # 批次爬取
@@ -159,14 +158,16 @@ uv run horus --help                    # 確認 CLI 可用
   - `/api/v1/media/<id>/comments/`（body 含 `comments`）→ 頂層留言
 - **需登入**：`requires_login=True`，先 `horus login instagram`（**建議用分身帳號**，爬取有封號風險）。
   無 anonymous 模式。
-- `--user @name`（profile 貼文）/ `--url <post>`（單貼）；stdin 多 user（一行一個）
+- `--user @name`（profile 貼文，**主要用法**）/ stdin 多 user（一行一個）。
+  ⚠️ **`--url <post>` 目前抓不到內容**：直接導航到 `/p/<code>/` 時 IG 把貼文 inline 進初始 payload
+  （非可攔截的 XHR），故單貼模式無效，需用 `--user`（見已知限制）。
 - **`--with-comments`：只抓頂層留言**（不抓 reply 的 reply）。留言只存媒體 URL（同 threads）。
-- **留言攔截機制（`comments_via_interception=True`）**：IG 留言不在 SSR，導航貼文頁時 comments XHR
-  會自動觸發。因此：
-  - 主爬 `on_batch` **一律丟棄** `is_reply` 項目（即使沒帶 `--with-comments`），避免 `url=""` 的
-    留言誤落地 / 誤吐 stdout。
-  - 留言只經 `--with-comments` 迴圈：對每篇貼文重跑 `scrape()`，取 `is_reply` 且
-    `parent_post_id == 貼文 pk` 的留言（杜絕跨貼文誤掛），回填 `url = 貼文 URL` 後才存。
+- **留言擷取機制（`comments_via_interception=True`，實機驗證過）**：IG 留言只在「從 profile grid
+  **點縮圖開 in-app modal**」時才 fire `/api/v1/media/<id>/comments/`；直接導航貼文頁**不會** fire。因此：
+  - 主爬 `on_batch` **一律丟棄** `is_reply` 項目（即使沒帶 `--with-comments`），防止 `url=""` 留言誤落地。
+  - `--with-comments` 時，cli 依貼文 `author_name` 推出 profile URL，呼叫
+    `scraper.scrape_comments_via_grid(profile_url, ...)`：載入 profile → 逐一點縮圖開 modal → 攔留言，
+    再以 `parent_post_id == 貼文 pk` 歸屬（杜絕跨貼文誤掛）、回填 `url = 貼文 URL` 後才存。
 - 關鍵解析：貼文 `_parse_item(node)` 用 `pk`/`code`/`taken_at`/`caption.text`/`user`，`like_count`/
   `comment_count` **直接取 node**（非 threads 的 `text_post_app_info`）；`media_urls` 複用 `_meta._extract_media_urls`。
   留言 `_parse_comment` 以 body 內 `media_id`（= 貼文 `pk`，裸值無 `_ownerid` 後綴）綁回貼文。
@@ -176,7 +177,10 @@ uv run horus --help                    # 確認 CLI 可用
   `child_comment_count`, `is_reply=True`, `parent_post_id`/`conversation_id`（= media_id）,
   `media_type=None`, `media_urls=[]`
 - 已知限制：
-  - **留言只保證首批**：分頁 cursor 未實作，只攔到導航當下載入的第一批頂層留言。
+  - **`--url` 單貼模式無效**：IG inline 貼文資料、直接導航不 fire 可攔截的 XHR。用 `--user`。
+    （未來可改走 SSR-JSON 解析 `xdt_api__v1__media__shortcode__web_info.items` 補回單貼，見 backlog。）
+  - **留言只涵蓋 grid 首頁貼文的首批留言**：modal walk 只點 profile grid 首屏載入的縮圖（~9–12 篇），
+    grid 未捲動載入更多；每篇也只攔到 modal 開啟當下的第一批（~15 則）頂層留言，留言分頁 cursor 未實作。
   - **carousel 影片 URL 未抓**：`_extract_media_urls` 對 carousel 只取圖片 candidates，carousel 內
     `video_versions` 未展開（單則影片貼文的 `video_versions` 有抓）。
   - 缺 `code` 的貼文 `url` 會是 `https://www.instagram.com/p//`（保留 item 讓 caller 判斷，不丟棄）。

@@ -311,47 +311,78 @@ async def _crawl(
 
                     if with_comments and crawled_top_level:
                         console.print(f"Fetching comments for {len(crawled_top_level)} posts...")
-                        comment_parser = None if use_intercept else adapter.get_comment_parser()
-                        for post in crawled_top_level:
-                            try:
-                                if use_intercept:
-                                    raw = await scraper.scrape(
-                                        post.url,
+
+                        def _upsert_comments(
+                            post: ScrapedItem, comment_items: list[ScrapedItem]
+                        ) -> None:
+                            nonlocal total_found, total_new
+                            if not comment_items:
+                                return
+                            new_count = storage.upsert_items(comment_items)
+                            total_found += len(comment_items)
+                            total_new += new_count
+                            console.print(
+                                f"  [dim]{post.url}: {len(comment_items)} comments "
+                                f"({new_count} new)[/dim]"
+                            )
+
+                        if use_intercept:
+                            # Instagram: comments only fire when a post is opened as an in-app
+                            # MODAL from the profile grid (direct /p/<code>/ navigation inlines
+                            # the post and fires nothing). So walk each profile's grid once,
+                            # clicking thumbnails, then attribute comments by media_id == post pk.
+                            posts_by_profile: dict[str, list[ScrapedItem]] = {}
+                            for post in crawled_top_level:
+                                handle = (post.author_name or "").lstrip("@")
+                                if handle:
+                                    posts_by_profile.setdefault(handle, []).append(post)
+                            for handle, posts in posts_by_profile.items():
+                                profile_url = f"https://www.instagram.com/{handle}/"
+                                try:
+                                    raw = await scraper.scrape_comments_via_grid(
+                                        profile_url,
                                         adapter.get_response_filter(),
                                         adapter.parse_response,
                                         state_path,
-                                    )  # no since= : comments aren't filtered by post cutoff
-                                    comment_items = []
-                                    for c in raw:
-                                        if not c.extra.get("is_reply"):
-                                            continue
-                                        # attribution: only keep comments for this post
-                                        if c.extra.get("parent_post_id") != post.id:
-                                            continue
-                                        c.url = post.url  # backfill (comment body lacks shortcode)
-                                        comment_items.append(c)
-                                elif comment_parser:
-                                    comment_items = await scraper.scrape_comments(
-                                        url=post.url,
-                                        post_pk=post.id,
-                                        parser=comment_parser,
-                                        state_path=state_path,
+                                        max_posts=len(posts),
                                     )
-                                else:
-                                    comment_items = []
-                                if comment_items:
-                                    new_count = storage.upsert_items(comment_items)
-                                    total_found += len(comment_items)
-                                    total_new += new_count
+                                except Exception as e:
                                     console.print(
-                                        f"  [dim]{post.url}: {len(comment_items)} comments "
-                                        f"({new_count} new)[/dim]"
+                                        f"  [yellow]Warning: comment walk failed for "
+                                        f"@{handle}: {e}[/yellow]"
                                     )
-                            except Exception as e:
-                                console.print(
-                                    f"  [yellow]Warning: failed to fetch comments "
-                                    f"for {post.url}: {e}[/yellow]"
-                                )
+                                    continue
+                                comments_by_media: dict[str, list[ScrapedItem]] = {}
+                                for c in raw:
+                                    if c.extra.get("is_reply"):
+                                        comments_by_media.setdefault(
+                                            c.extra.get("parent_post_id", ""), []
+                                        ).append(c)
+                                for post in posts:
+                                    cs = comments_by_media.get(post.id, [])
+                                    for c in cs:
+                                        c.url = post.url  # backfill (comment body lacks shortcode)
+                                    _upsert_comments(post, cs)
+                        else:
+                            comment_parser = adapter.get_comment_parser()
+                            for post in crawled_top_level:
+                                try:
+                                    comment_items = (
+                                        await scraper.scrape_comments(
+                                            url=post.url,
+                                            post_pk=post.id,
+                                            parser=comment_parser,
+                                            state_path=state_path,
+                                        )
+                                        if comment_parser
+                                        else []
+                                    )
+                                    _upsert_comments(post, comment_items)
+                                except Exception as e:
+                                    console.print(
+                                        f"  [yellow]Warning: failed to fetch comments "
+                                        f"for {post.url}: {e}[/yellow]"
+                                    )
     except (KeyboardInterrupt, asyncio.CancelledError):
         interrupted = True
 

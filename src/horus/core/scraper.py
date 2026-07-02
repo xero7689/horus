@@ -251,6 +251,90 @@ class BaseScraper(BaseBrowser):
 
         return parser(html, post_pk=post_pk)
 
+    async def scrape_comments_via_grid(
+        self,
+        profile_url: str,
+        response_filter: Callable[[str, dict[str, Any]], bool],
+        parser: Callable[[dict[str, Any]], list[ScrapedItem]],
+        state_path: Path | None = None,
+        *,
+        max_posts: int = 12,
+        thumbnail_selector: str = 'a[href*="/p/"]',
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> list[ScrapedItem]:
+        """Capture comments by walking a profile grid and opening each post as an in-app modal.
+
+        Instagram only fires the ``/api/v1/media/<id>/comments/`` (and ``/info/``) XHRs when a
+        post is opened as a client-side MODAL from the profile grid — a direct navigation to
+        ``/p/<code>/`` inlines the post and fires nothing interceptable. So we load the profile,
+        click each of the first ``max_posts`` post thumbnails (closing the modal with Escape
+        between clicks), and parse whatever the ``response_filter`` accepts.
+
+        Returns all parsed items (posts from ``/info/`` and comments from ``/comments/``),
+        deduped by id. Callers attribute comments to posts via ``parent_post_id`` (== media_id).
+        """
+        assert self._browser is not None, "Use as async context manager"
+
+        collected: list[dict[str, Any]] = []
+
+        async def on_response(response: Response) -> None:
+            try:
+                body = await response.json()
+                if response_filter(response.url, body):
+                    collected.append(body)
+            except Exception:
+                pass
+
+        context = await self.new_context(state_path=state_path)
+        page = await context.new_page()
+        page.on("response", on_response)
+
+        try:
+            await page.goto(profile_url, wait_until="domcontentloaded", timeout=60000)
+            await asyncio.sleep(random.uniform(2, 4))
+
+            thumbnails = page.locator(thumbnail_selector)
+            count = await thumbnails.count()
+            walk = min(max_posts, count)
+
+            for i in range(walk):
+                prev = len(collected)
+                try:
+                    await thumbnails.nth(i).click(timeout=8000)
+                except Exception:
+                    continue  # thumbnail vanished / not clickable — skip
+
+                # Wait for the modal's comments/info XHRs to arrive
+                for _ in range(12):
+                    if len(collected) > prev:
+                        break
+                    await asyncio.sleep(0.5)
+                await asyncio.sleep(random.uniform(1, 2))
+
+                # Close the modal to return to the grid before the next click
+                try:
+                    await page.keyboard.press("Escape")
+                except Exception:
+                    pass
+                await asyncio.sleep(random.uniform(0.5, 1.5))
+
+                if on_progress:
+                    on_progress(i + 1, len(collected))
+        finally:
+            await context.close()
+
+        items: list[ScrapedItem] = []
+        for body in collected:
+            items.extend(parser(body))
+
+        seen: set[str] = set()
+        unique: list[ScrapedItem] = []
+        for item in items:
+            if item.id not in seen:
+                seen.add(item.id)
+                unique.append(item)
+        return unique
+
     async def _scroll_page(self, page: Page) -> None:
         """Scroll to bottom with random delay."""
         delay = random.uniform(

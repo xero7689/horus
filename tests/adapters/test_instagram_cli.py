@@ -1,10 +1,17 @@
 """CLI-layer tests for the Instagram adapter interception comment path.
 
+Instagram comments only fire when a post is opened as an in-app MODAL from the profile
+grid (direct /p/<code>/ navigation inlines the post and fires nothing). So the CLI fetches
+comments by calling ``scraper.scrape_comments_via_grid(profile_url, ...)`` once per profile
+(derived from each crawled post's ``author_name``), then attributes comments to posts by
+``parent_post_id == post.id`` and backfills the comment URL from the parent post.
+
 Covers:
-1. --with-comments uses scrape() intercept, never scrape_comments() (test 1)
-2. Mixed primary batch: comment leaked into primary batch is deferred to backfill (test 2)
-3. Backfill attribution filter: foreign-post comments are rejected (test 3)
-4. Without --with-comments: comments leaking into primary batch are silently dropped (test 4)
+1. --with-comments uses scrape_comments_via_grid(), never the HTML scrape_comments() (test 1)
+2. Mixed primary batch: a comment leaked into the primary crawl is dropped by the on_batch
+   guard and only lands via the grid-walk backfill (test 2)
+3. Attribution: comments whose parent_post_id doesn't match a crawled post are rejected (test 3)
+4. Without --with-comments: comments leaking into the primary batch are silently dropped (test 4)
 """
 
 from collections.abc import Callable
@@ -26,6 +33,7 @@ from horus.models import ScrapedItem
 # ---------------------------------------------------------------------------
 
 _TS = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+_HANDLE = "nasa"
 _POST_URL = "https://www.instagram.com/p/abc123/"
 _POST_ID = "POST001"
 _CMT_ID = "CMT001"
@@ -78,11 +86,13 @@ def register_stub_adapter() -> Any:
 
 
 def _post() -> ScrapedItem:
+    # author_name is required: the CLI derives the profile URL for the grid walk from it.
     return ScrapedItem(
         id=_POST_ID,
         site_id="stub_ig",
         url=_POST_URL,
         text="post text",
+        author_name=_HANDLE,
         timestamp=_TS,
         extra={"is_reply": False, "parent_post_id": None},
     )
@@ -118,22 +128,15 @@ def _foreign_comment() -> ScrapedItem:
 def _build_scraper_mock(
     *,
     primary_batch: list[ScrapedItem],
-    backfill_items: list[ScrapedItem] | None = None,
+    grid_items: list[ScrapedItem] | None = None,
 ) -> MagicMock:
     """Return a BaseScraper context-manager mock.
 
-    First ``scrape()`` call (primary crawl) fires ``on_batch`` with
-    ``primary_batch`` and returns the same list.  Subsequent calls
-    (comment backfill) return ``backfill_items`` without calling
-    ``on_batch``.
-
-    NOTE: the call-count dispatch (1st call = primary, rest = backfill)
-    only holds for single-primary-URL scenarios. All tests here crawl a
-    single ``--url``, so exactly one primary scrape precedes the backfill
-    loop; multi-URL crawls would break this ordering assumption.
+    ``scrape()`` (the primary crawl) fires ``on_batch`` with ``primary_batch`` and returns
+    it.  ``scrape_comments_via_grid()`` (the modal walk) returns ``grid_items`` — the
+    posts + comments the modal walk would have intercepted.
     """
-    call_count = 0
-    _backfill = backfill_items or []
+    _grid = grid_items or []
 
     async def _scrape(
         url: str,
@@ -145,21 +148,28 @@ def _build_scraper_mock(
         on_progress: Any = None,
         on_batch: Any = None,
     ) -> list[ScrapedItem]:
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            # Primary crawl — simulate batched delivery via on_batch callback
-            if on_batch and primary_batch:
-                on_batch(list(primary_batch))
-            return list(primary_batch)
-        # Comment backfill call — no on_batch, just return items
-        return list(_backfill)
+        if on_batch and primary_batch:
+            on_batch(list(primary_batch))
+        return list(primary_batch)
+
+    async def _grid_walk(
+        profile_url: str,
+        response_filter: Any,
+        parser: Any,
+        state_path: Any = None,
+        *,
+        max_posts: int = 12,
+        thumbnail_selector: str = "",
+        on_progress: Any = None,
+    ) -> list[ScrapedItem]:
+        return list(_grid)
 
     scraper = MagicMock()
     scraper.__aenter__ = AsyncMock(return_value=scraper)
     scraper.__aexit__ = AsyncMock(return_value=None)
     scraper.scrape = AsyncMock(side_effect=_scrape)
     scraper.scrape_comments = AsyncMock(return_value=[])
+    scraper.scrape_comments_via_grid = AsyncMock(side_effect=_grid_walk)
     return scraper
 
 
@@ -191,12 +201,12 @@ def _make_recording_upsert(
 # ---------------------------------------------------------------------------
 
 
-def test_ig_with_comments_uses_interception(monkeypatch: Any, tmp_path: Any) -> None:
-    """Primary crawl yields a post; comment backfill via scrape() not scrape_comments().
+def test_ig_with_comments_uses_grid_walk(monkeypatch: Any, tmp_path: Any) -> None:
+    """Comments are fetched via scrape_comments_via_grid(), never the HTML scrape_comments().
 
     Assert:
     - scrape_comments() is NEVER called
-    - scrape() is called exactly twice (primary + one comment backfill)
+    - scrape_comments_via_grid() is called once, with the derived profile URL
     - both post and comment land in DB
     - comment.url is backfilled to post.url
     """
@@ -204,7 +214,7 @@ def test_ig_with_comments_uses_interception(monkeypatch: Any, tmp_path: Any) -> 
 
     scraper_mock = _build_scraper_mock(
         primary_batch=[_post()],
-        backfill_items=[_comment()],  # scrape() returns comment on second call
+        grid_items=[_comment()],
     )
 
     with patch("horus.cli.BaseScraper", return_value=scraper_mock):
@@ -215,22 +225,22 @@ def test_ig_with_comments_uses_interception(monkeypatch: Any, tmp_path: Any) -> 
 
     assert result.exit_code == 0, result.output
 
-    # scrape_comments must NOT have been called — intercept path only
+    # HTML comment path must NOT be used
     scraper_mock.scrape_comments.assert_not_called()
 
-    # scrape() called twice: primary crawl + comment backfill
-    assert scraper_mock.scrape.call_count == 2
+    # Grid walk called once, with the profile URL derived from post.author_name
+    scraper_mock.scrape_comments_via_grid.assert_called_once()
+    profile_url = scraper_mock.scrape_comments_via_grid.call_args.args[0]
+    assert _HANDLE in profile_url, f"profile url should target @{_HANDLE}, got {profile_url!r}"
 
-    # Check DB: both post and comment should be stored
     storage = HorusStorage(tmp_path / "t.db")
     items = storage.get_items(site_id="stub_ig", limit=100)
     storage.close()
 
     ids = {item.id for item in items}
     assert _POST_ID in ids, "post should be stored"
-    assert _CMT_ID in ids, "comment should be stored after backfill"
+    assert _CMT_ID in ids, "comment should be stored after grid walk"
 
-    # Comment url must be backfilled from post
     stored_comment = next(i for i in items if i.id == _CMT_ID)
     assert stored_comment.url == _POST_URL, (
         f"comment url should be backfilled to {_POST_URL!r}, got {stored_comment.url!r}"
@@ -238,17 +248,17 @@ def test_ig_with_comments_uses_interception(monkeypatch: Any, tmp_path: Any) -> 
 
 
 def test_ig_mixed_page_defers_comments(monkeypatch: Any, tmp_path: Any) -> None:
-    """KEY test (codex finding 1+4): mixed primary batch defers comment to backfill.
+    """KEY test: a comment leaked into the primary batch is deferred to the grid-walk backfill.
 
-    The primary on_batch receives [post, comment].  The comment MUST be dropped
-    from the first upsert_items call and only land via the --with-comments
-    backfill loop with url backfilled.
+    The primary on_batch receives [post, comment].  The comment MUST be dropped from the
+    first upsert_items call (on_batch guard) and only land via the grid-walk backfill with
+    url backfilled.
     """
     monkeypatch.setenv("HORUS_DB_PATH", str(tmp_path / "t.db"))
 
     scraper_mock = _build_scraper_mock(
         primary_batch=[_post(), _comment()],  # comment leaks into primary batch
-        backfill_items=[_comment()],  # comment available again when re-scraping post page
+        grid_items=[_comment()],  # comment intercepted again by the modal walk
     )
 
     captured: list[list[ScrapedItem]] = []
@@ -264,38 +274,35 @@ def test_ig_mixed_page_defers_comments(monkeypatch: Any, tmp_path: Any) -> None:
         )
 
     assert result.exit_code == 0, result.output
-
-    # Must have had at least two upsert_items calls: primary + backfill
     assert len(captured) >= 2, f"expected ≥2 upsert calls, got {len(captured)}: {captured}"
 
-    # First upsert: only post — comment MUST have been filtered out by on_batch guard
+    # First upsert: only post — comment MUST have been filtered out by the on_batch guard
     first_ids = {i.id for i in captured[0]}
     assert _POST_ID in first_ids, "post should be in first upsert"
     assert _CMT_ID not in first_ids, (
         "comment must NOT appear in primary-crawl upsert — it should be deferred"
     )
 
-    # Second upsert: comment with backfilled url
-    second_ids = {i.id for i in captured[1]}
-    assert _CMT_ID in second_ids, "comment should appear in backfill upsert"
-
-    backfill_comment = next(i for i in captured[1] if i.id == _CMT_ID)
+    # A later upsert: comment with backfilled url
+    later_ids = {i.id for batch in captured[1:] for i in batch}
+    assert _CMT_ID in later_ids, "comment should appear in a backfill upsert"
+    backfill_comment = next(i for batch in captured[1:] for i in batch if i.id == _CMT_ID)
     assert backfill_comment.url == _POST_URL, (
         f"comment url must be backfilled to {_POST_URL!r}, got {backfill_comment.url!r}"
     )
 
 
-def test_ig_backfill_rejects_foreign_comment(monkeypatch: Any, tmp_path: Any) -> None:
-    """Attribution filter: only comments whose parent_post_id matches post.id are kept.
+def test_ig_grid_walk_rejects_foreign_comment(monkeypatch: Any, tmp_path: Any) -> None:
+    """Attribution filter: only comments whose parent_post_id matches a crawled post are kept.
 
-    The comment scrape returns two replies — one for this post, one for another.
-    Only the matching one should land in DB with backfilled url.
+    The grid walk returns two replies — one for this post, one for another. Only the
+    matching one should land in DB with backfilled url.
     """
     monkeypatch.setenv("HORUS_DB_PATH", str(tmp_path / "t.db"))
 
     scraper_mock = _build_scraper_mock(
         primary_batch=[_post()],
-        backfill_items=[_comment(), _foreign_comment()],  # two replies; only one belongs here
+        grid_items=[_comment(), _foreign_comment()],  # two replies; only one belongs here
     )
 
     with patch("horus.cli.BaseScraper", return_value=scraper_mock):
@@ -322,15 +329,14 @@ def test_ig_backfill_rejects_foreign_comment(monkeypatch: Any, tmp_path: Any) ->
 
 
 def test_ig_no_with_comments_drops_comments(monkeypatch: Any, tmp_path: Any) -> None:
-    """Without --with-comments, comments leaked into primary batch are silently dropped.
+    """Without --with-comments, comments leaked into the primary batch are silently dropped.
 
-    scrape() is called only once (no backfill loop).  Only the post lands in DB.
+    The grid walk is never invoked; only the post lands in DB.
     """
     monkeypatch.setenv("HORUS_DB_PATH", str(tmp_path / "t.db"))
 
     scraper_mock = _build_scraper_mock(
         primary_batch=[_post(), _comment()],  # comment leaks in
-        # backfill_items unused — scrape() should not be called a second time
     )
 
     with patch("horus.cli.BaseScraper", return_value=scraper_mock):
@@ -341,13 +347,10 @@ def test_ig_no_with_comments_drops_comments(monkeypatch: Any, tmp_path: Any) -> 
 
     assert result.exit_code == 0, result.output
 
-    # scrape() called exactly once — no backfill loop without --with-comments
-    assert scraper_mock.scrape.call_count == 1, (
-        "scrape() should only be called once (no backfill without --with-comments)"
-    )
+    # No comment fetch at all without --with-comments
+    scraper_mock.scrape_comments_via_grid.assert_not_called()
     scraper_mock.scrape_comments.assert_not_called()
 
-    # Only the post should be in DB; comment must have been dropped
     storage = HorusStorage(tmp_path / "t.db")
     items = storage.get_items(site_id="stub_ig", limit=100)
     storage.close()
