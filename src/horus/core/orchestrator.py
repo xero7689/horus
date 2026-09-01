@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 from horus.adapters.base import SiteAdapter
 from horus.config import Settings
+from horus.core.redaction import mask_secrets
 from horus.core.scraper import BaseScraper
 from horus.core.storage import HorusStorage
 from horus.models import ScrapedItem, ScrapedPage
@@ -157,8 +158,9 @@ class CrawlOrchestrator:
         new_count = self._storage.upsert_items(items)
         outcome.total_found = len(items)
         outcome.total_new = new_count
+        # Redact before the row is written: kwargs may carry a hand-typed secret.
         self._storage.log_crawl(
-            site, str(kwargs), outcome.total_found, outcome.total_new, started_at
+            site, str(mask_secrets(kwargs)), outcome.total_found, outcome.total_new, started_at
         )
         for item in items:
             self._reporter.emit(item)
