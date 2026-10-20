@@ -28,6 +28,27 @@ def _html_to_markdown(html: str) -> str:
     return markdownify(str(main), heading_style="ATX")
 
 
+def count_new_items(items: list[ScrapedItem], seen: set[str], *, since: datetime | None) -> int:
+    """Count items scrape() will return: unseen ids newer than `since`.
+
+    Mutates `seen`. Mirrors the post-loop dedup + since filter so the in-loop
+    count matches what scrape() finally returns.
+    """
+    counted = 0
+    for item in items:
+        if item.id in seen:
+            continue
+        seen.add(item.id)
+        if since is None or item.timestamp > since:
+            counted += 1
+    return counted
+
+
+def limit_reached(counted: int, limit: int) -> bool:
+    """True once `counted` meets `limit`; limit 0 means unlimited."""
+    return limit > 0 and counted >= limit
+
+
 class BaseScraper(BaseBrowser):
     """Generic scroll-and-intercept scraper. Subclasses inject strategy via adapters."""
 
