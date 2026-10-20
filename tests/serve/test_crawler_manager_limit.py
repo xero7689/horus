@@ -79,3 +79,21 @@ async def test_http_mode_job_kwargs_win_on_limit_collision(monkeypatch) -> None:
     await manager._run(job, limit=42, since=None)
 
     assert _FakeHttpAdapter.received_kwargs.get("limit") == 7
+
+
+@pytest.mark.asyncio
+async def test_submit_normalizes_option_keys_to_adapter_kwargs(monkeypatch) -> None:
+    """Form option names ("some-key", "--x-y") reach fetch_items as snake_case."""
+    _FakeHttpAdapter.received_kwargs = {}
+    monkeypatch.setattr("horus.serve.crawler_manager.get_adapter", lambda _site: _FakeHttpAdapter)
+    storage = HorusStorage(Path(":memory:"), check_same_thread=False)
+    monkeypatch.setattr("horus.serve.crawler_manager.HorusStorage", lambda _path: storage)
+
+    manager = CrawlerManager(MagicMock(resolved_db_path=Path(":memory:")))
+    job = manager.submit("fake-http", {"query": "x", "some-key": "v", "--url-list": "f"})
+    assert job._task is not None
+    await job._task
+
+    assert _FakeHttpAdapter.received_kwargs.get("some_key") == "v"
+    assert _FakeHttpAdapter.received_kwargs.get("url_list") == "f"
+    assert "some-key" not in _FakeHttpAdapter.received_kwargs
