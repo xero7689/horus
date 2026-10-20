@@ -247,7 +247,7 @@ def _parse_timeline(body: dict[str, Any]) -> list[ScrapedItem]:
                 if item is not None:
                     items.append(item)
             # cursor-*, who-to-follow-*, promoted-*, … → skip
-        except Exception:
+        except Exception:  # nosec B112 — skip malformed entry, see docstring
             continue
     return _dedup(items)
 
