@@ -1,51 +1,16 @@
 import json
 import re
-import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from horus.adapters._io import read_stdin_lines
+from horus.adapters._meta import _MEDIA_TYPE_MAP, _extract_media_urls
 from horus.adapters.base import SiteAdapter
 from horus.models import ScrapedItem
 
 if TYPE_CHECKING:
     from horus.core.scraper import CommentParser
-
-_MEDIA_TYPE_MAP = {
-    1: "IMAGE",
-    2: "VIDEO",
-    8: "CAROUSEL_ALBUM",
-    19: "TEXT_POST",
-}
-
-
-def _extract_media_urls(post_data: dict[str, Any]) -> list[str]:
-    """Extract media URLs from image_versions2 or carousel_media."""
-    urls: list[str] = []
-
-    # Single image/video
-    image_versions = post_data.get("image_versions2", {})
-    if image_versions:
-        candidates = image_versions.get("candidates", [])
-        if candidates:
-            urls.append(candidates[0].get("url", ""))
-
-    # Video
-    video_versions = post_data.get("video_versions", [])
-    if video_versions:
-        urls.append(video_versions[0].get("url", ""))
-
-    # Carousel replaces single image
-    carousel = post_data.get("carousel_media")
-    if carousel:
-        urls.clear()
-        for item in carousel:
-            img = item.get("image_versions2", {})
-            candidates = img.get("candidates", [])
-            if candidates:
-                urls.append(candidates[0].get("url", ""))
-
-    return [u for u in urls if u]
 
 
 def _parse_item(
@@ -101,6 +66,9 @@ def _parse_item(
             "reply_to_username": reply_to_username,
         },
     )
+
+
+_POST_URL_RE = re.compile(r"threads\.(?:net|com)/@[^/]+/post/[^/?#]+")
 
 
 def _extract_thread_items_arrays(html: str) -> list[list[dict[str, Any]]]:
@@ -199,6 +167,25 @@ class ThreadsAdapter(SiteAdapter):
 
         return filter_fn
 
+    def is_post_url(self, url: str) -> bool:
+        return _POST_URL_RE.search(url) is not None
+
+    def extract_inline_items(self, html: str) -> dict[str, Any]:
+        """Pull the inlined thread from a directly-navigated post page.
+
+        Threads post pages inline the thread as SSR ``thread_items`` arrays and fire
+        no mediaData GraphQL XHR (same pattern as Instagram's inlined single post).
+        The first array is the post's containing thread (the same assumption
+        ``parse_comments_from_html`` relies on); later arrays are comment groups and
+        are left to the --with-comments path. Returns a synthesized mediaData body so
+        ``parse_response`` handles it unchanged: a standalone post parses in posts
+        mode, a mid-thread post (2+ thread_items) in replies mode with linkage.
+        """
+        arrays = _extract_thread_items_arrays(html)
+        if not arrays:
+            return {}
+        return {"data": {"mediaData": {"edges": [{"node": {"thread_items": arrays[0]}}]}}}
+
     def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
         """Parse posts OR replies depending on response structure.
 
@@ -281,15 +268,11 @@ class ThreadsAdapter(SiteAdapter):
             if mode == "replies":
                 return [f"https://www.threads.net/@{username}/replies"]
             return [f"https://www.threads.net/@{username}"]
-        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
-            try:
-                usernames = [line.strip().lstrip("@") for line in sys.stdin if line.strip()]
-            except OSError:
-                usernames = []
-            if usernames:
-                if mode == "replies":
-                    return [f"https://www.threads.net/@{u}/replies" for u in usernames]
-                return [f"https://www.threads.net/@{u}" for u in usernames]
+        usernames = [ln.lstrip("@") for ln in read_stdin_lines()]
+        if usernames:
+            if mode == "replies":
+                return [f"https://www.threads.net/@{u}/replies" for u in usernames]
+            return [f"https://www.threads.net/@{u}" for u in usernames]
         raise ValueError("threads adapter requires --user or --url")
 
     def get_comment_parser(self) -> "CommentParser":

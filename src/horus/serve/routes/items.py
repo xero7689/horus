@@ -1,11 +1,13 @@
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from horus.adapters import list_adapters
+from horus.core.dates import parse_since
 from horus.core.storage import HorusStorage
+from horus.core.thread_tree import build_thread_trees
 from horus.serve.deps import get_storage, get_templates
 
 router = APIRouter(prefix="/items")
@@ -30,7 +32,7 @@ async def list_items(
     since_dt: datetime | None = None
     if since:
         try:
-            since_dt = datetime.fromisoformat(since).replace(tzinfo=UTC)
+            since_dt = parse_since(since)
         except ValueError:
             pass
 
@@ -53,6 +55,38 @@ async def list_items(
             "limit": limit,
             "offset": offset,
             "site_ids": _site_ids(),
+            "active": "items",
+        },
+    )
+
+
+@router.get("/{site_id}/{item_id}", response_class=HTMLResponse)
+async def item_detail(
+    request: Request,
+    site_id: str,
+    item_id: str,
+    storage: HorusStorage = Depends(get_storage),
+    templates: Jinja2Templates = Depends(get_templates),
+) -> HTMLResponse:
+    item = storage.get_item(site_id, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="Item not found")
+
+    conversation_id = item.extra.get("conversation_id") or item.id
+    thread_items = storage.get_thread_items(site_id, conversation_id)
+    trees = build_thread_trees(thread_items)
+
+    root = next((t for t in trees if t.item.id == item.id), None)
+    if root is None:
+        # viewing a reply directly — fall back to first true root, else synthetic
+        root = next((t for t in trees if t.is_root), trees[0] if trees else None)
+
+    return templates.TemplateResponse(
+        "item_detail.html",
+        {
+            "request": request,
+            "item": item,
+            "root": root,
             "active": "items",
         },
     )

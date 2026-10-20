@@ -285,3 +285,71 @@ class TestPages:
         assert len(page1) == 2
         assert len(page2) == 2
         assert {p.url for p in page1}.isdisjoint({p.url for p in page2})
+
+
+class TestThreadQueries:
+    def test_get_item_returns_none_for_missing(self, storage: HorusStorage) -> None:
+        assert storage.get_item("threads", "nope") is None
+
+    def test_get_item_returns_existing(self, storage: HorusStorage) -> None:
+        from datetime import UTC, datetime
+
+        from horus.models import ScrapedItem
+
+        storage.upsert_items(
+            [
+                ScrapedItem(
+                    id="p1",
+                    site_id="threads",
+                    url="https://threads.net/t/p1",
+                    author_name="alice",
+                    text="hi",
+                    timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                )
+            ]
+        )
+        item = storage.get_item("threads", "p1")
+        assert item is not None
+        assert item.id == "p1"
+
+    def test_get_thread_items_includes_root_and_replies(self, storage: HorusStorage) -> None:
+        from datetime import UTC, datetime
+
+        from horus.models import ScrapedItem
+
+        storage.upsert_items(
+            [
+                ScrapedItem(
+                    id="p1",
+                    site_id="threads",
+                    url="https://threads.net/t/p1",
+                    author_name="alice",
+                    text="root",
+                    timestamp=datetime(2026, 1, 1, 14, 0, tzinfo=UTC),
+                ),
+                ScrapedItem(
+                    id="r1",
+                    site_id="threads",
+                    url="https://threads.net/t/r1",
+                    author_name="bob",
+                    text="reply",
+                    timestamp=datetime(2026, 1, 1, 14, 5, tzinfo=UTC),
+                    extra={
+                        "is_reply": True,
+                        "parent_post_id": "p1",
+                        "conversation_id": "p1",
+                    },
+                ),
+                ScrapedItem(
+                    id="other",
+                    site_id="threads",
+                    url="https://threads.net/t/other",
+                    author_name="carol",
+                    text="unrelated",
+                    timestamp=datetime(2026, 1, 1, 14, 10, tzinfo=UTC),
+                ),
+            ]
+        )
+        thread = storage.get_thread_items("threads", "p1")
+        ids = {i.id for i in thread}
+        assert ids == {"p1", "r1"}

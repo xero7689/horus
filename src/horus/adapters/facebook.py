@@ -1,9 +1,7 @@
-import sys
-from collections.abc import Callable
 from typing import Any, ClassVar
 
+from horus.adapters._io import read_stdin_lines
 from horus.adapters.base import SiteAdapter
-from horus.models import ScrapedItem
 
 # JavaScript executed after page load to expand "See more" buttons.
 _FB_PAGE_SCRIPT = """
@@ -54,27 +52,13 @@ class FacebookAdapter(SiteAdapter):
     # JS that returns only the post body HTML (bypasses FB layout noise).
     content_script: ClassVar[str] = _FB_CONTENT_SCRIPT
 
-    def get_response_filter(self) -> Callable[[str, dict[str, Any]], bool]:
-        # Page-mode: no response interception
-        return lambda _url, _body: False
-
-    def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
-        # Page-mode: content extracted via page.content(), not response bodies
-        return []
-
     def get_urls(self, **kwargs: Any) -> list[str]:
         url: str | None = kwargs.get("url")
         if url:
             return [url]
-        if hasattr(sys.stdin, "isatty") and not sys.stdin.isatty():
-            try:
-                lines = [
-                    line.strip() for line in sys.stdin if line.strip() and not line.startswith("#")
-                ]
-                if lines:
-                    return lines
-            except OSError:
-                pass
+        lines = read_stdin_lines(skip_comments=True)
+        if lines:
+            return lines
         raise ValueError("facebook adapter requires --url")
 
     def get_crawl_options(self) -> list[dict[str, Any]]:

@@ -1,0 +1,64 @@
+{
+  "comments": [
+    {
+      "child_comment_count": 3,
+      "comment_index": 0,
+      "comment_like_count": 7,
+      "content_type": "comment",
+      "created_at": 1781933380,
+      "created_at_utc": 1781933380,
+      "is_ranked_comment": true,
+      "media_id": "3921942437490559575",
+      "pk": "18106636315971620",
+      "status": "Active",
+      "text": "留言測試1",
+      "type": 0,
+      "user": {
+        "pk": "56258239867",
+        "username": "test_user_3",
+        "full_name": "Test User 3"
+      }
+    },
+    {
+      "child_comment_count": 2,
+      "comment_index": 1,
+      "comment_like_count": 4,
+      "content_type": "comment",
+      "created_at": 1781864033,
+      "created_at_utc": 1781864033,
+      "is_ranked_comment": true,
+      "media_id": "3921942437490559575",
+      "pk": "18366718981227618",
+      "status": "Active",
+      "text": "留言測試2",
+      "type": 0,
+      "user": {
+        "pk": "11139429667",
+        "username": "test_user_4",
+        "full_name": "Test User 4"
+      }
+    },
+    {
+      "child_comment_count": 1,
+      "comment_index": 2,
+      "comment_like_count": 4,
+      "content_type": "comment",
+      "created_at": 1781864668,
+      "created_at_utc": 1781864668,
+      "is_ranked_comment": true,
+      "media_id": "3921942437490559575",
+      "pk": "18056181659725077",
+      "status": "Active",
+      "text": "留言測試3",
+      "type": 0,
+      "user": {
+        "pk": "541239745",
+        "username": "test_user_5",
+        "full_name": "Test User 5"
+      }
+    }
+  ],
+  "comment_count": 82,
+  "can_view_more_preview_comments": false,
+  "comment_likes_enabled": true
+}

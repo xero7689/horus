@@ -1,0 +1,22 @@
+{# Recursive reply node. Expects 'child' (ThreadNode) in context. #}
+<li>
+  <div class="reply-card">
+    <div class="reply-meta">
+      <span class="author">@{{ child.item.author_name or child.item.author_id or 'unknown' }}</span>
+      · {{ child.item.timestamp.strftime('%H:%M') }}
+      {% if child.item.extra.get('reply_to_username') %}
+        · <span class="reply-to">回覆 @{{ child.item.extra.reply_to_username }}</span>
+      {% endif %}
+    </div>
+    {% if child.item.text %}
+      <div class="reply-body">{{ child.item.text }}</div>
+    {% endif %}
+  </div>
+  {% if child.children %}
+    <ul>
+      {% for child in child.children %}
+        {% include "partials/reply_node.html" %}
+      {% endfor %}
+    </ul>
+  {% endif %}
+</li>

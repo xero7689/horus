@@ -2,9 +2,8 @@ import asyncio
 import csv
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import click
 from rich.console import Console
@@ -13,8 +12,11 @@ from rich.table import Table
 from horus.adapters import get_adapter, list_adapters
 from horus.config import Settings
 from horus.core.browser import BaseBrowser
+from horus.core.dates import parse_since
+from horus.core.orchestrator import CrawlOrchestrator, CrawlOutcome
 from horus.core.scraper import BaseScraper
 from horus.core.storage import HorusStorage
+from horus.core.thread_tree import build_thread_trees, render_thread_md
 from horus.models import ScrapedItem, ScrapedPage
 
 console = Console(stderr=True)
@@ -31,10 +33,8 @@ def _get_storage(settings: Settings | None = None) -> HorusStorage:
 
 
 def _parse_since(since_str: str | None) -> datetime | None:
-    if not since_str:
-        return None
     try:
-        return datetime.fromisoformat(since_str).replace(tzinfo=UTC)
+        return parse_since(since_str)
     except ValueError:
         raise click.BadParameter(f"Invalid date format: '{since_str}'. Use YYYY-MM-DD or ISO 8601.")
 
@@ -145,6 +145,24 @@ def crawl(
     asyncio.run(_crawl(site, since, limit, no_state, output, stdout, extra_args))
 
 
+class _ConsoleReporter:
+    """CrawlReporter that reproduces the CLI's Rich console + stdout JSONL output."""
+
+    def __init__(self, emit_stdout: bool) -> None:
+        self._emit_stdout = emit_stdout
+
+    def log(self, message: str) -> None:
+        console.print(message)
+
+    def progress(self, scroll: int, total: int) -> None:
+        console.print(f"  [dim]scroll #{scroll} — {total} items so far[/dim]")
+
+    def emit(self, item: ScrapedItem | ScrapedPage) -> None:
+        """Write one JSONL line to stdout if --stdout is set."""
+        if self._emit_stdout:
+            click.echo(item.model_dump_json())
+
+
 async def _crawl(
     site: str,
     since_str: str | None,
@@ -187,139 +205,54 @@ async def _crawl(
             )
         state_path = None
 
-    started_at = datetime.now(UTC)
-    total_found = 0
-    total_new = 0
-
-    scraper_kwargs: dict[str, Any] = {
-        "headless": settings.headless,
-        "scroll_delay_min": settings.scroll_delay_min,
-        "scroll_delay_max": settings.scroll_delay_max,
-        "request_jitter": settings.request_jitter,
-        "max_pages": settings.max_pages,
-    }
-
-    def _emit(item: ScrapedItem | ScrapedPage) -> None:
-        """Write one JSONL line to stdout if --stdout is set."""
-        if emit_stdout:
-            click.echo(item.model_dump_json())
-
-    interrupted = False
+    orch = CrawlOrchestrator(
+        storage,
+        settings,
+        # Module-level name resolved at call time; patch("horus.cli.BaseScraper") still works.
+        scraper_cls=BaseScraper,
+        reporter=_ConsoleReporter(emit_stdout),
+    )
+    # Parse --since ONLY for the intercept path, exactly as before: _parse_since was
+    # only reached inside the intercept branch, so `crawl web --since garbage` is
+    # currently ignored — parsing eagerly for all modes would turn it into a
+    # BadParameter failure (behavior change).
+    since = (
+        _parse_since(since_str)
+        if not (adapter_cls.has_http_mode or adapter_cls.has_page_mode)
+        else None
+    )
+    outcome = CrawlOutcome()
     try:
-        if adapter_cls.has_http_mode:
-            # Direct HTTP path (no Playwright): DDG etc.
-            console.print(f"Searching [cyan]{site}[/cyan]...")
-            items = await adapter.fetch_items(**kwargs)
-            items = adapter.post_process(items)
-            new_count = storage.upsert_items(items)
-            total_found = len(items)
-            total_new = new_count
-            storage.log_crawl(site, str(kwargs), total_found, total_new, started_at)
-            for item in items:
-                _emit(item)
-        else:
-            async with BaseScraper(**scraper_kwargs) as scraper:
-                if adapter_cls.has_page_mode:
-                    # Page-based path: HTML → Markdown
-                    wait_for = getattr(adapter_cls, "wait_for_selector", None)
-                    page_script = getattr(adapter_cls, "page_script", None)
-                    content_script = getattr(adapter_cls, "content_script", None)
-                    for url in urls:
-                        console.print(f"Fetching [cyan]{url}[/cyan]...")
-                        page = await scraper.scrape_page(
-                            url,
-                            state_path,
-                            site_id=site,
-                            wait_for=wait_for,
-                            page_script=page_script,
-                            content_script=content_script,
-                        )
-                        is_new = storage.upsert_page(page)
-                        total_found += 1
-                        total_new += int(is_new)
-                        if output_dir:
-                            _write_page_md(page, output_dir)
-                            console.print(f"  [dim]→ saved markdown to {output_dir}[/dim]")
-                        _emit(page)
-                    storage.log_crawl(
-                        site,
-                        urls[0] if len(urls) == 1 else f"{len(urls)} URLs",
-                        total_found,
-                        total_new,
-                        started_at,
-                    )  # noqa: E501
-                else:
-                    # Response-intercept path (Threads etc.)
-                    since = _parse_since(since_str)
-                    if since is None:
-                        since = storage.get_latest_timestamp(site)
-
-                    with_comments = kwargs.get("with_comments") == "true"
-                    # Populated in on_batch when with_comments is True
-                    crawled_top_level: list[ScrapedItem] = []
-
-                    def on_progress(scroll: int, total: int) -> None:
-                        console.print(f"  [dim]scroll #{scroll} — {total} items so far[/dim]")
-
-                    def on_batch(batch: list[ScrapedItem]) -> None:
-                        nonlocal total_found, total_new
-                        batch = adapter.post_process(batch)
-                        new_count = storage.upsert_items(batch)
-                        total_found += len(batch)
-                        total_new += new_count
-                        for item in batch:
-                            _emit(item)
-                        # Collect top-level posts for comment fetch
-                        if with_comments:
-                            crawled_top_level.extend(
-                                p for p in batch if not p.extra.get("is_reply", False)
-                            )
-
-                    for url in urls:
-                        console.print(f"Crawling [cyan]{url}[/cyan]...")
-                        await scraper.scrape(
-                            url,
-                            adapter.get_response_filter(),
-                            adapter.parse_response,
-                            state_path,
-                            since=since,
-                            on_progress=on_progress,
-                            on_batch=on_batch,
-                        )
-                        storage.log_crawl(site, url, total_found, total_new, started_at)
-
-                    # Fetch comments for posts collected during this crawl
-                    comment_parser = adapter.get_comment_parser() if with_comments else None
-                    if comment_parser and crawled_top_level:
-                        console.print(f"Fetching comments for {len(crawled_top_level)} posts...")
-                        for post in crawled_top_level:
-                            try:
-                                comment_items = await scraper.scrape_comments(
-                                    url=post.url,
-                                    post_pk=post.id,
-                                    parser=comment_parser,
-                                    state_path=state_path,
-                                )
-                                if comment_items:
-                                    new_count = storage.upsert_items(comment_items)
-                                    total_found += len(comment_items)
-                                    total_new += new_count
-                                    console.print(
-                                        f"  [dim]{post.url}: {len(comment_items)} comments "
-                                        f"({new_count} new)[/dim]"
-                                    )
-                            except Exception as e:
-                                console.print(
-                                    f"  [yellow]Warning: failed to fetch comments "
-                                    f"for {post.url}: {e}[/yellow]"
-                                )
+        await orch.run(
+            adapter,
+            urls,
+            adapter_cls=adapter_cls,
+            site=site,
+            kwargs=kwargs,
+            limit=limit,
+            since=since,
+            state_path=state_path,
+            output_dir=output_dir,
+            write_page_md=_write_page_md,
+            outcome=outcome,
+        )
     except (KeyboardInterrupt, asyncio.CancelledError):
-        interrupted = True
+        outcome.interrupted = True
+    except (ValueError, RuntimeError) as e:
+        # Was the http-mode sys.exit path (known divergence #1: now wraps all modes).
+        console.print(f"[red]{e}[/red]")
+        storage.close()
+        sys.exit(1)
 
-    if interrupted:
-        console.print(f"\n[yellow]Interrupted.[/yellow] {total_found} fetched, {total_new} saved.")
+    if outcome.interrupted:
+        console.print(
+            f"\n[yellow]Interrupted.[/yellow] "
+            f"{outcome.total_found} fetched, {outcome.total_new} saved."
+        )
     else:
-        console.print(f"\n[bold]Done.[/bold] {total_found} fetched, {total_new} new saved.")
+        console.print(
+            f"\n[bold]Done.[/bold] {outcome.total_found} fetched, {outcome.total_new} new saved."
+        )
     storage.close()
 
 
@@ -443,16 +376,23 @@ def pages(site: str | None, limit: int) -> None:
 @click.option("--site", default=None, help="Filter by site ID")
 @click.option("--author", "-a", default=None, help="Filter by author")
 @click.option("--url", default=None, help="Filter by exact URL (for page-mode exports)")
-@click.option("--format", "fmt", type=click.Choice(["json", "csv", "markdown"]), default="json")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["json", "csv", "markdown", "thread-md"]),
+    default="json",
+)
 @click.option("--output", "-o", required=True, help="Output file path (or directory for markdown)")
 @click.option("--limit", "-n", default=10000, type=int, help="Max items to export")
 def export(
     site: str | None, author: str | None, url: str | None, fmt: str, output: str, limit: int
 ) -> None:  # noqa: E501
-    """Export stored items to JSON, CSV, or Markdown.
+    """Export stored items to JSON, CSV, Markdown, or thread-md.
 
-    For --format markdown, --output should be a directory.
-    Pages from page-mode adapters (e.g. 'web') will be exported as .md files.
+    For --format markdown, --output should be a directory; pages from
+    page-mode adapters (e.g. 'web') are exported as .md files.
+    For --format thread-md, --output should be a directory; each root
+    post and its replies are rendered as a single threaded .md file.
     """
     storage = _get_storage()
     output_path = Path(output)
@@ -469,6 +409,12 @@ def export(
     items = storage.get_items(site_id=site, author_name=author, limit=limit)
     storage.close()
 
+    if fmt == "thread-md":
+        output_path.mkdir(parents=True, exist_ok=True)
+        count = _export_thread_md(items, output_path)
+        console.print(f"[green]Exported {count} threads to {output_path}[/green]")
+        return
+
     if fmt == "json":
         _export_json(items, output_path)
     else:
@@ -480,6 +426,33 @@ def export(
 def _export_json(items: list[ScrapedItem], path: Path) -> None:
     data = [item.model_dump(mode="json") for item in items]
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def _export_thread_md(items: list[ScrapedItem], out_dir: Path) -> int:
+    roots = build_thread_trees(items)
+    written = 0
+    skipped_orphans = 0
+    for root in roots:
+        if not root.is_root:
+            skipped_orphans += 1
+            continue
+        author = root.item.author_name or root.item.author_id or "unknown"
+        safe_author = _slug_for_filename(author) or "unknown"
+        safe_id = _slug_for_filename(root.item.id) or "post"
+        filename = f"{safe_author}_{safe_id}.md"
+        (out_dir / filename).write_text(render_thread_md(root), encoding="utf-8")
+        written += 1
+    if skipped_orphans:
+        console.print(
+            f"[yellow]Skipped {skipped_orphans} orphan reply group(s) "
+            f"(root post not in result set; re-export without --author/--limit "
+            f"filters to include them).[/yellow]"
+        )
+    return written
+
+
+def _slug_for_filename(value: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in value)[:80]
 
 
 def _export_csv(items: list[ScrapedItem], path: Path) -> None:
