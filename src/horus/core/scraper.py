@@ -77,6 +77,7 @@ class BaseScraper(BaseBrowser):
         since: datetime | None = None,
         on_progress: Callable[[int, int], None] | None = None,
         on_batch: Callable[[list[ScrapedItem]], None] | None = None,
+        limit: int = 0,
     ) -> list[ScrapedItem]:
         """Navigate to URL, intercept responses, scroll, parse, return items.
 
@@ -84,12 +85,17 @@ class BaseScraper(BaseBrowser):
         - early bailout when all initial items are older than `since`
         - consecutive-empty 3 times → stop scrolling
         - `since` cutoff stops scrolling when oldest item <= since
+        - `limit` > 0: stop scrolling once that many unseen items newer than
+          `since` have been collected (0 = unlimited; a stop threshold — the
+          last batch is kept whole, so the result may slightly exceed it)
         - dedup by id
         - descending sort by timestamp
         """
         assert self._browser is not None, "Use as async context manager"
 
         all_items: list[ScrapedItem] = []
+        seen_ids: set[str] = set()
+        counted = 0
         collected_responses: list[dict[str, Any]] = []
 
         async def on_response(response: Response) -> None:
@@ -119,9 +125,13 @@ class BaseScraper(BaseBrowser):
                 all_items.extend(parser(resp))
             if on_batch and all_items:
                 on_batch(list(all_items))
+            counted += count_new_items(all_items, seen_ids, since=since)
 
-            # Early bailout: if all initial items are older than since, skip scrolling
-            if since and all_items and all(item.timestamp <= since for item in all_items):
+            # Early bailout: if all initial items are older than since, or the
+            # initial load already meets the limit, skip scrolling
+            if (since and all_items and all(item.timestamp <= since for item in all_items)) or (
+                limit_reached(counted, limit)
+            ):
                 pass  # skip scroll loop entirely
             else:
                 # Scroll to load more
@@ -149,6 +159,7 @@ class BaseScraper(BaseBrowser):
                     all_items.extend(new_items)
                     if on_batch and new_items:
                         on_batch(new_items)
+                    counted += count_new_items(new_items, seen_ids, since=since)
 
                     if on_progress:
                         on_progress(scroll_count, len(all_items))
@@ -166,6 +177,10 @@ class BaseScraper(BaseBrowser):
                         oldest = min(item.timestamp for item in all_items)
                         if oldest <= since:
                             break
+
+                    # Stop once the limit is met
+                    if limit_reached(counted, limit):
+                        break
         finally:
             await context.close()
 
