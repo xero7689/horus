@@ -258,4 +258,12 @@ class InstagramAdapter(SiteAdapter):
                 "required": False,
                 "default": None,
             },
+            {
+                "name": "--with-comments",
+                "help": (
+                    "Also fetch top-level comments (first batch per post, via profile-grid modal)"
+                ),
+                "required": False,
+                "default": None,
+            },
         ]

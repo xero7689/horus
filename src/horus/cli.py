@@ -12,6 +12,7 @@ from rich.table import Table
 from horus.adapters import get_adapter, list_adapters
 from horus.config import Settings
 from horus.core.browser import BaseBrowser
+from horus.core.crawl_plan import resolve_crawl_plan
 from horus.core.dates import parse_since
 from horus.core.orchestrator import CrawlOrchestrator, CrawlOutcome
 from horus.core.scraper import BaseScraper
@@ -115,7 +116,13 @@ async def _login(site: str, output_override: str | None) -> None:
 @click.option(
     "--since", "-s", default=None, help="Only fetch items newer than this date (YYYY-MM-DD)"
 )  # noqa: E501
-@click.option("--limit", "-n", default=50, type=int, help="Max items to fetch (0 = unlimited)")
+@click.option(
+    "--limit",
+    "-n",
+    default=50,
+    type=click.IntRange(min=0),
+    help="Max items per target (0 = unlimited)",
+)
 @click.option("--no-state", is_flag=True, help="Ignore saved login state")
 @click.option(
     "--output", "-o", default=None, help="Output directory for .md files (page-mode adapters only)"
@@ -175,35 +182,23 @@ async def _crawl(
     settings = _get_settings()
     storage = _get_storage(settings)
 
-    try:
-        adapter_cls = get_adapter(site)
-    except ValueError as e:
-        console.print(f"[red]{e}[/red]")
-        storage.close()
-        sys.exit(1)
-
-    adapter = adapter_cls()
     kwargs = _parse_extra_args(extra_args)
-
     try:
-        urls = adapter.get_urls(**kwargs)
+        plan = resolve_crawl_plan(site, kwargs, settings, use_saved_state=not no_state)
     except ValueError as e:
         console.print(f"[red]{e}[/red]")
         storage.close()
         sys.exit(1)
+
+    if plan.login_state_missing:
+        console.print(
+            f"[yellow]Warning:[/yellow] No login state found at "
+            f"{settings.state_path_for(site)}. Run [bold]horus login {site}[/bold] first."
+        )
 
     output_dir = Path(output) if output else None
     if output_dir:
         output_dir.mkdir(parents=True, exist_ok=True)
-
-    state_path = None if no_state else settings.state_path_for(site)
-    if state_path and not state_path.exists():
-        if adapter.requires_login:
-            console.print(
-                f"[yellow]Warning:[/yellow] No login state found at {state_path}. "
-                f"Run [bold]horus login {site}[/bold] first."
-            )
-        state_path = None
 
     orch = CrawlOrchestrator(
         storage,
@@ -218,20 +213,20 @@ async def _crawl(
     # BadParameter failure (behavior change).
     since = (
         _parse_since(since_str)
-        if not (adapter_cls.has_http_mode or adapter_cls.has_page_mode)
+        if not (plan.adapter_cls.has_http_mode or plan.adapter_cls.has_page_mode)
         else None
     )
     outcome = CrawlOutcome()
     try:
         await orch.run(
-            adapter,
-            urls,
-            adapter_cls=adapter_cls,
+            plan.adapter,
+            plan.urls,
+            adapter_cls=plan.adapter_cls,
             site=site,
             kwargs=kwargs,
             limit=limit,
             since=since,
-            state_path=state_path,
+            state_path=plan.state_path,
             output_dir=output_dir,
             write_page_md=_write_page_md,
             outcome=outcome,
@@ -239,7 +234,7 @@ async def _crawl(
     except (KeyboardInterrupt, asyncio.CancelledError):
         outcome.interrupted = True
     except (ValueError, RuntimeError) as e:
-        # Was the http-mode sys.exit path (known divergence #1: now wraps all modes).
+        # Adapter/runtime failures in any mode: report and exit non-zero.
         console.print(f"[red]{e}[/red]")
         storage.close()
         sys.exit(1)

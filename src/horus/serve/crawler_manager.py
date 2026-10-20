@@ -122,7 +122,10 @@ class CrawlerManager:
         since: str | None = None,
     ) -> CrawlJob:
         job_id = uuid.uuid4().hex[:8]
-        job = CrawlJob(job_id=job_id, site=site, kwargs=kwargs)
+        # The crawl form posts option names like "with-comments"; adapters and the
+        # orchestrator read "with_comments" (CLI-style normalization).
+        normalized = {k.lstrip("-").replace("-", "_"): v for k, v in kwargs.items()}
+        job = CrawlJob(job_id=job_id, site=site, kwargs=normalized)
         self._jobs[job_id] = job
         job._task = asyncio.create_task(
             self._run(job, limit, since),

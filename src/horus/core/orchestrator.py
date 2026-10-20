@@ -16,6 +16,11 @@ from horus.core.storage import HorusStorage
 from horus.models import ScrapedItem, ScrapedPage
 
 
+def _is_unattributed_comment(item: ScrapedItem) -> bool:
+    """URL-less reply: an intercepted comment awaiting --with-comments attribution."""
+    return bool(item.extra.get("is_reply")) and not item.url
+
+
 class CrawlReporter(Protocol):
     """Frontend-specific output. All methods must be non-blocking and cheap."""
 
@@ -122,6 +127,7 @@ class CrawlOrchestrator:
                         urls,
                         site=site,
                         kwargs=kwargs,
+                        limit=limit,
                         since=since,
                         state_path=state_path,
                         outcome=outcome,
@@ -207,6 +213,7 @@ class CrawlOrchestrator:
         *,
         site: str,
         kwargs: dict[str, Any],
+        limit: int,
         since: datetime | None,
         state_path: Path | None,
         outcome: CrawlOutcome,
@@ -229,7 +236,7 @@ class CrawlOrchestrator:
             # persist from a primary batch. (Threads/twitter replies carry URLs and
             # are unaffected.) This guard runs unconditionally — with or without
             # --with-comments — matching the old IG flag guard's semantics.
-            batch = [p for p in batch if not (p.extra.get("is_reply") and not p.url)]
+            batch = [p for p in batch if not _is_unattributed_comment(p)]
             if not batch:
                 return
             batch = adapter.post_process(batch)
@@ -244,6 +251,8 @@ class CrawlOrchestrator:
             if with_comments:
                 crawled_top_level.extend(p for p in batch if not p.extra.get("is_reply", False))
 
+        # `limit` applies per target: every scroll-crawled URL gets the full limit
+        # (0 = unlimited). Single-post URLs are one item and need no limit.
         crawled_via_post_url = False
         for url in urls:
             self._reporter.log(f"Crawling [cyan]{url}[/cyan]...")
@@ -268,6 +277,7 @@ class CrawlOrchestrator:
                     since=since,
                     on_progress=on_progress,
                     on_batch=on_batch,
+                    limit=limit,
                 )
             self._storage.log_crawl(site, url, outcome.total_found, outcome.total_new, started_at)
 

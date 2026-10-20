@@ -22,6 +22,7 @@ src/horus/
 │   ├── browser.py      # BaseBrowser（Playwright 生命週期，save_login_state）
 │   ├── scraper.py      # BaseScraper（scrape：scroll + response intercept；scrape_page：HTML → Markdown）
 │   ├── orchestrator.py # CrawlOrchestrator（http/page/intercept 三向 dispatch + 儲存副作用；cli/serve 共用）
+│   ├── crawl_plan.py   # resolve_crawl_plan（adapter → urls → 登入狀態；目前 cli 使用，serve/mcp 之後接上）
 │   ├── dates.py        # parse_since（cli/serve 共用，raises ValueError）
 │   └── storage.py      # HorusStorage（SQLite + FTS5；items + pages 兩張表）
 └── adapters/
@@ -101,6 +102,11 @@ horus stats                                      # 統計資訊
 - **CrawlOrchestrator**：`core/orchestrator.py` 是 crawl 編排的單一實作（http / page / intercept
   三向 dispatch、儲存副作用、留言抓取）；cli 與 serve 都是 thin shell，只差 `CrawlReporter` 實作
   （Rich console + stdout JSONL vs SSE broadcast + job log）
+- **`--limit` 是每個目標的上限**：每個 profile / 貼文 URL 各自最多約 N 筆；`0` = 不限。http 模式傳給
+  `fetch_items`；攔截模式捲動到該目標收集滿 N 筆（去重、比 since 新）就停；page 模式
+  （web/facebook）不受影響，一個 URL 一頁。是停止門檻不是精確上限，最後一批整批保留。
+  預設 50，所以捲動爬取每個 profile 約 50 筆就停，要抓完整 profile 請給 `--limit 0`。
+  serve 網頁表單只收 1–1000，`POST /crawl` API 才接受 0（不限）
 - **ScrapedItem.extra**：site-specific 欄位存 JSON dict，避免多表 migration
 - **response_filter 簽名**：`(url: str, body: dict) -> bool`，雙重過濾（URL pattern + body 結構）
 - **State 儲存**：`~/.horus/states/<site_id>.json`，per-site Playwright storage_state

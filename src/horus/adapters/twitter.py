@@ -311,6 +311,12 @@ class TwitterAdapter(SiteAdapter):
                 "default": None,
             },
             {
+                "name": "--url",
+                "help": "Single status URL (https://x.com/<user>/status/<id>)",
+                "required": False,
+                "default": None,
+            },
+            {
                 "name": "--mode",
                 "help": "posts or replies",
                 "required": False,
