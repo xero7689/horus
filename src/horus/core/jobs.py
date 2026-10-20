@@ -1,7 +1,8 @@
-"""UI-agnostic background crawl jobs, shared by serve (SSE) and mcp.
+"""UI-agnostic background crawl jobs.
 
-Holds lifecycle mechanics only. Frontend policy — SSE fan-out, one crawl per
-site, error formatting — stays in the frontend.
+Holds lifecycle mechanics only. serve wraps this with SSE fan-out; frontend
+policy (event fan-out, error formatting, concurrency rules) stays in the
+frontend.
 """
 
 from __future__ import annotations
@@ -170,10 +171,11 @@ class JobManager:
     async def _run(
         self, job: CrawlJob, plan: CrawlPlan, limit: int, since: datetime | None
     ) -> None:
-        job.status = JobStatus.RUNNING
-        self._notify(job, "status", {"status": "running"})
-        storage = self._storage_factory()
+        storage: HorusStorage | None = None
         try:
+            job.status = JobStatus.RUNNING
+            self._notify(job, "status", {"status": "running"})
+            storage = self._storage_factory()
             orchestrator = CrawlOrchestrator(
                 storage,
                 self._settings,
@@ -204,7 +206,8 @@ class JobManager:
             self._notify(job, "error", {"message": str(e)})
         finally:
             job.finished_at = datetime.now(UTC)
-            storage.close()
+            if storage is not None:
+                storage.close()
 
     def _on_task_done(self, job: CrawlJob) -> None:
         # A task cancelled before its first step never enters _run.

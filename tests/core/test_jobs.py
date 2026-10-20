@@ -189,3 +189,21 @@ async def test_max_finished_none_keeps_everything(tmp_path: Path) -> None:
         job = mgr.submit(_plan(), {"query": "q"}, limit=10, since=None)
         await job.task  # type: ignore[misc]
     assert len(mgr.list_jobs()) == 3
+
+
+async def test_storage_open_failure_marks_job_failed(tmp_path: Path) -> None:
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    def _boom() -> HorusStorage:
+        raise RuntimeError("db locked")
+
+    mgr = JobManager(
+        Settings(base_dir=tmp_path, _env_file=None),
+        storage_factory=_boom,
+        on_event=lambda _job, name, data: events.append((name, data)),
+    )
+    job = mgr.submit(_plan(), {"query": "q"}, limit=10, since=None)
+    await job.task  # type: ignore[misc]
+    assert job.status == JobStatus.FAILED
+    assert (job.error, job.error_type) == ("db locked", "RuntimeError")
+    assert events[-1] == ("error", {"message": "db locked"})
