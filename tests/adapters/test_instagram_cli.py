@@ -151,6 +151,7 @@ def _build_scraper_mock(
         since: Any = None,
         on_progress: Any = None,
         on_batch: Any = None,
+        limit: int = 0,
     ) -> list[ScrapedItem]:
         if on_batch and primary_batch:
             on_batch(list(primary_batch))
@@ -411,6 +412,7 @@ def test_ig_multi_profile_walks_each_profile(monkeypatch: Any, tmp_path: Any) ->
         since=None,
         on_progress=None,
         on_batch=None,
+        limit=0,
     ):  # type: ignore[no-untyped-def]
         if on_batch:
             on_batch([post_a, post_b])

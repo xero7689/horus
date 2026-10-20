@@ -33,7 +33,15 @@ class TestCrawlWithComments:
         scrape_comments_calls: list[dict] = []
 
         async def fake_scrape(
-            url, response_filter, parser, state_path, *, since=None, on_progress=None, on_batch=None
+            url,
+            response_filter,
+            parser,
+            state_path,
+            *,
+            since=None,
+            on_progress=None,
+            on_batch=None,
+            limit=0,
         ):
             if on_batch:
                 on_batch([post1, post2])
