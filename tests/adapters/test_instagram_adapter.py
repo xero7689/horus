@@ -112,8 +112,12 @@ def test_get_urls_user_and_url() -> None:
     ]
 
 
-def test_crawl_options_expose_user_and_url() -> None:
-    assert {o["name"] for o in InstagramAdapter().get_crawl_options()} == {"--user", "--url"}
+def test_crawl_options_expose_user_url_and_comments() -> None:
+    assert {o["name"] for o in InstagramAdapter().get_crawl_options()} == {
+        "--user",
+        "--url",
+        "--with-comments",
+    }
 
 
 def test_registered() -> None:

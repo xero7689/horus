@@ -288,9 +288,21 @@ class ThreadsAdapter(SiteAdapter):
                 "default": None,
             },
             {
+                "name": "--url",
+                "help": "Single post URL (https://www.threads.com/@user/post/<code>)",
+                "required": False,
+                "default": None,
+            },
+            {
                 "name": "--mode",
                 "help": "posts or replies",
                 "required": False,
                 "default": "posts",
+            },
+            {
+                "name": "--with-comments",
+                "help": "Also fetch replies from each crawled post's page",
+                "required": False,
+                "default": None,
             },
         ]
