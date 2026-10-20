@@ -90,7 +90,7 @@ async def _job_event_stream(job_id: str, manager: CrawlerManager) -> AsyncGenera
         yield f"event: {event}\ndata: {json.dumps(data)}\n\n"
         return
 
-    q = job.subscribe()
+    q = manager.subscribe(job_id)
     try:
         while True:
             try:
@@ -101,7 +101,7 @@ async def _job_event_stream(job_id: str, manager: CrawlerManager) -> AsyncGenera
             except TimeoutError:
                 yield ": keepalive\n\n"
     finally:
-        job.unsubscribe(q)
+        manager.unsubscribe(job_id, q)
 
 
 @router.get("/{job_id}/stream")

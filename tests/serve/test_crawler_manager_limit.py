@@ -1,20 +1,17 @@
-"""CrawlerManager-level test: http-mode forwards the serve `limit` into fetch_items.
+"""CrawlerManager forwards the serve `limit` into the shared JobManager.
 
-The serve UI's crawl form has its own `limit` field which reaches
-`CrawlerManager._run(job, limit, since)` as the `limit` parameter. The http-mode
-branch must forward it into `adapter.fetch_items`, mirroring the CLI fix — kwargs
-wins on collision.
+The serve UI's crawl form has its own `limit` field. It must reach http-mode
+`adapter.fetch_items`, mirroring the CLI — kwargs wins on collision.
 """
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
-from horus.core.storage import HorusStorage
+from horus.config import Settings
 from horus.models import ScrapedItem
-from horus.serve.crawler_manager import CrawlerManager, CrawlJob
+from horus.serve.crawler_manager import CrawlerManager, JobStatus
 
 
 class _FakeHttpAdapter:
@@ -23,6 +20,7 @@ class _FakeHttpAdapter:
     site_id = "fake-http"
     has_http_mode = True
     has_page_mode = False
+    requires_login = False
     received_kwargs: dict[str, Any] = {}
 
     async def fetch_items(self, **kwargs: Any) -> list[ScrapedItem]:
@@ -33,67 +31,49 @@ class _FakeHttpAdapter:
         return items
 
 
-@pytest.mark.asyncio
-async def test_http_mode_forwards_limit_into_fetch_items(monkeypatch) -> None:
+@pytest.fixture
+def manager(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> CrawlerManager:
     _FakeHttpAdapter.received_kwargs = {}
+    monkeypatch.setattr("horus.core.crawl_plan.get_adapter", lambda _site: _FakeHttpAdapter)
+    # db_path explicit: a developer's exported HORUS_DB_PATH must not leak into tests.
+    return CrawlerManager(Settings(base_dir=tmp_path, db_path=tmp_path / "t.db", _env_file=None))
 
-    monkeypatch.setattr(
-        "horus.serve.crawler_manager.get_adapter",
-        lambda _site: _FakeHttpAdapter,
-    )
 
-    settings = MagicMock(resolved_db_path=Path(":memory:"))
-    manager = CrawlerManager(settings)
-
-    # Use a real in-memory storage so upsert_items / log_crawl work end-to-end.
-    storage = HorusStorage(Path(":memory:"), check_same_thread=False)
-    monkeypatch.setattr(
-        "horus.serve.crawler_manager.HorusStorage",
-        lambda _path: storage,
-    )
-
-    job = CrawlJob(job_id="t1", site="fake-http", kwargs={"query": "x"})
-    await manager._run(job, limit=42, since=None)
-
+async def test_http_mode_forwards_limit_into_fetch_items(manager: CrawlerManager) -> None:
+    job = manager.submit("fake-http", {"query": "x"}, limit=42)
+    await job.task  # type: ignore[misc]
+    assert job.status == JobStatus.DONE
     assert _FakeHttpAdapter.received_kwargs.get("limit") == 42
     assert _FakeHttpAdapter.received_kwargs.get("query") == "x"
 
 
-@pytest.mark.asyncio
-async def test_http_mode_job_kwargs_win_on_limit_collision(monkeypatch) -> None:
-    """If job.kwargs already carries `limit`, it takes precedence over the serve limit."""
-    _FakeHttpAdapter.received_kwargs = {}
-
-    monkeypatch.setattr(
-        "horus.serve.crawler_manager.get_adapter",
-        lambda _site: _FakeHttpAdapter,
-    )
-    storage = HorusStorage(Path(":memory:"), check_same_thread=False)
-    monkeypatch.setattr(
-        "horus.serve.crawler_manager.HorusStorage",
-        lambda _path: storage,
-    )
-
-    manager = CrawlerManager(MagicMock(resolved_db_path=Path(":memory:")))
-    job = CrawlJob(job_id="t2", site="fake-http", kwargs={"query": "x", "limit": 7})
-    await manager._run(job, limit=42, since=None)
-
+async def test_kwargs_limit_wins_on_collision(manager: CrawlerManager) -> None:
+    job = manager.submit("fake-http", {"query": "x", "limit": 7}, limit=42)
+    await job.task  # type: ignore[misc]
     assert _FakeHttpAdapter.received_kwargs.get("limit") == 7
 
 
-@pytest.mark.asyncio
-async def test_submit_normalizes_option_keys_to_adapter_kwargs(monkeypatch) -> None:
+async def test_submit_normalizes_option_keys_to_adapter_kwargs(manager: CrawlerManager) -> None:
     """Form option names ("some-key", "--x-y") reach fetch_items as snake_case."""
-    _FakeHttpAdapter.received_kwargs = {}
-    monkeypatch.setattr("horus.serve.crawler_manager.get_adapter", lambda _site: _FakeHttpAdapter)
-    storage = HorusStorage(Path(":memory:"), check_same_thread=False)
-    monkeypatch.setattr("horus.serve.crawler_manager.HorusStorage", lambda _path: storage)
-
-    manager = CrawlerManager(MagicMock(resolved_db_path=Path(":memory:")))
     job = manager.submit("fake-http", {"query": "x", "some-key": "v", "--url-list": "f"})
-    assert job._task is not None
-    await job._task
-
+    await job.task  # type: ignore[misc]
     assert _FakeHttpAdapter.received_kwargs.get("some_key") == "v"
     assert _FakeHttpAdapter.received_kwargs.get("url_list") == "f"
     assert "some-key" not in _FakeHttpAdapter.received_kwargs
+
+
+async def test_bad_since_is_silently_ignored(manager: CrawlerManager) -> None:
+    job = manager.submit("fake-http", {"query": "x"}, limit=1, since="not-a-date")
+    await job.task  # type: ignore[misc]
+    assert job.status == JobStatus.DONE
+
+
+async def test_subscribers_receive_sse_formatted_events(manager: CrawlerManager) -> None:
+    job = manager.submit("fake-http", {"query": "x"}, limit=1)
+    q = manager.subscribe(job.job_id)
+    await job.task  # type: ignore[misc]
+    messages = []
+    while not q.empty():
+        messages.append(q.get_nowait())
+    manager.unsubscribe(job.job_id, q)
+    assert any(m.startswith("event: done\n") for m in messages)
