@@ -116,7 +116,13 @@ async def _login(site: str, output_override: str | None) -> None:
 @click.option(
     "--since", "-s", default=None, help="Only fetch items newer than this date (YYYY-MM-DD)"
 )  # noqa: E501
-@click.option("--limit", "-n", default=50, type=int, help="Max items to fetch (0 = unlimited)")
+@click.option(
+    "--limit",
+    "-n",
+    default=50,
+    type=click.IntRange(min=0),
+    help="Max items per target (0 = unlimited)",
+)
 @click.option("--no-state", is_flag=True, help="Ignore saved login state")
 @click.option(
     "--output", "-o", default=None, help="Output directory for .md files (page-mode adapters only)"
