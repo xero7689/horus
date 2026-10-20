@@ -114,7 +114,6 @@ class CrawlOrchestrator:
                         scraper,
                         urls,
                         site=site,
-                        limit=limit,
                         state_path=state_path,
                         output_dir=output_dir,
                         write_page_md=write_page_md,
@@ -171,7 +170,6 @@ class CrawlOrchestrator:
         urls: list[str],
         *,
         site: str,
-        limit: int,
         state_path: Path | None,
         output_dir: Path | None,
         write_page_md: Any | None,
@@ -182,7 +180,6 @@ class CrawlOrchestrator:
         wait_for = cls.wait_for_selector
         page_script = cls.page_script
         content_script = cls.content_script
-        urls = urls[: limit or None]  # limit 0 = unlimited
         for url in urls:
             self._reporter.log(f"Fetching [cyan]{url}[/cyan]...")
             page = await scraper.scrape_page(
@@ -254,14 +251,10 @@ class CrawlOrchestrator:
             if with_comments:
                 crawled_top_level.extend(p for p in batch if not p.extra.get("is_reply", False))
 
-        # `limit` is a crawl-wide total: each URL gets the remaining quota.
-        # Subtract scrape()'s (deduplicated) return, never outcome.total_found —
-        # on_batch counts raw batches before dedup.
-        remaining = limit
+        # `limit` applies per target: every scroll-crawled URL gets the full limit
+        # (0 = unlimited). Single-post URLs are one item and need no limit.
         crawled_via_post_url = False
         for url in urls:
-            if limit and remaining <= 0:
-                break
             self._reporter.log(f"Crawling [cyan]{url}[/cyan]...")
             if adapter.is_post_url(url):
                 # Single post: IG inlines the post as JSON in the page (direct
@@ -275,10 +268,8 @@ class CrawlOrchestrator:
                     on_batch(items)
                 else:
                     self._reporter.log(f"  [yellow]No post data found at {url}[/yellow]")
-                # Count only what on_batch keeps: URL-less replies are dropped there.
-                remaining -= sum(1 for p in items if not _is_unattributed_comment(p))
             else:
-                got = await scraper.scrape(
+                await scraper.scrape(
                     url,
                     adapter.get_response_filter(),
                     adapter.parse_response,
@@ -286,10 +277,8 @@ class CrawlOrchestrator:
                     since=since,
                     on_progress=on_progress,
                     on_batch=on_batch,
-                    limit=remaining if limit else 0,
+                    limit=limit,
                 )
-                # Same rule as on_batch: dropped comments don't spend quota.
-                remaining -= sum(1 for p in got if not _is_unattributed_comment(p))
             self._storage.log_crawl(site, url, outcome.total_found, outcome.total_new, started_at)
 
         if with_comments and crawled_top_level:
