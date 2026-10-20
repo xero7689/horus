@@ -49,10 +49,13 @@ horus export --site threads --format json -o out.json
 horus export --site threads --format csv -o out.csv
 ```
 
-`--limit` is the total for the whole crawl, `0` = unlimited. The default is 50, so
-scrolling crawls (Instagram, Threads, Twitter) now stop at about 50 items instead of
-scrolling until `HORUS_MAX_PAGES`; pass `--limit 0` to crawl a full profile. The `serve`
-web form also defaults to 50, but only accepts 1–1000 (no unlimited option).
+`--limit` applies per target (each profile or post URL), `0` = unlimited. It is a stop
+threshold: scrolling stops once about N items are collected and the last batch is kept
+whole. The default is 50, so scrolling crawls (Instagram, Threads, Twitter) stop around
+50 items per profile instead of scrolling until `HORUS_MAX_PAGES`; pass `--limit 0` for a
+full profile. Page mode (web, facebook) is not limited by it, and http mode (serper) passes
+it to the API. The `serve` web form accepts 1-1000; the `POST /crawl` API also accepts 0
+(unlimited).
 
 ### Generic Web Pages (no login required)
 
