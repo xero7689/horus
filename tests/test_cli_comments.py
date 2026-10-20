@@ -71,7 +71,7 @@ class TestCrawlWithComments:
 
         runner = CliRunner()
         with (
-            patch("horus.cli.get_adapter", return_value=mock_adapter_cls),
+            patch("horus.core.crawl_plan.get_adapter", return_value=mock_adapter_cls),
             patch("horus.cli.BaseScraper") as MockScraper,
             patch("horus.cli._get_storage") as mock_storage_fn,
             patch("horus.cli._get_settings") as mock_settings_fn,
