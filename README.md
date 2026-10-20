@@ -49,6 +49,11 @@ horus export --site threads --format json -o out.json
 horus export --site threads --format csv -o out.csv
 ```
 
+`--limit` is the total for the whole crawl, `0` = unlimited. The default is 50, so
+scrolling crawls (Instagram, Threads, Twitter) now stop at about 50 items instead of
+scrolling until `HORUS_MAX_PAGES`; pass `--limit 0` to crawl a full profile. The `serve`
+web form also defaults to 50 and behaves the same.
+
 ### Generic Web Pages (no login required)
 
 ```bash

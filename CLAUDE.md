@@ -22,6 +22,7 @@ src/horus/
 │   ├── browser.py      # BaseBrowser（Playwright 生命週期，save_login_state）
 │   ├── scraper.py      # BaseScraper（scrape：scroll + response intercept；scrape_page：HTML → Markdown）
 │   ├── orchestrator.py # CrawlOrchestrator（http/page/intercept 三向 dispatch + 儲存副作用；cli/serve 共用）
+│   ├── crawl_plan.py   # resolve_crawl_plan（adapter → urls → 登入狀態；cli/serve/mcp 共用）
 │   ├── dates.py        # parse_since（cli/serve 共用，raises ValueError）
 │   └── storage.py      # HorusStorage（SQLite + FTS5；items + pages 兩張表）
 └── adapters/
@@ -101,6 +102,9 @@ horus stats                                      # 統計資訊
 - **CrawlOrchestrator**：`core/orchestrator.py` 是 crawl 編排的單一實作（http / page / intercept
   三向 dispatch、儲存副作用、留言抓取）；cli 與 serve 都是 thin shell，只差 `CrawlReporter` 實作
   （Rich console + stdout JSONL vs SSE broadcast + job log）
+- **`--limit` 是整次爬取的總量**：http 模式傳給 `fetch_items`；page 模式只抓前 N 個網址；
+  攔截模式捲動到收集滿 N 筆（去重、比 since 新）就停，多個網址共用額度。`0` = 不限。
+  是停止門檻不是精確上限，最後一批整批保留。CLI 與 serve 預設都是 50
 - **ScrapedItem.extra**：site-specific 欄位存 JSON dict，避免多表 migration
 - **response_filter 簽名**：`(url: str, body: dict) -> bool`，雙重過濾（URL pattern + body 結構）
 - **State 儲存**：`~/.horus/states/<site_id>.json`，per-site Playwright storage_state
