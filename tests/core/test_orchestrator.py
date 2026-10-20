@@ -1,8 +1,11 @@
 """Smoke: orchestrator http-mode path with a stub adapter and NullReporter."""
 
 import asyncio
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import Any
+
+import pytest
 
 from horus.adapters.base import SiteAdapter
 from horus.config import Settings
@@ -113,15 +116,24 @@ class _PageStub(SiteAdapter):
         return []
 
 
-def _orch(tmp_path: Any, scraper: _FakeScraper) -> CrawlOrchestrator:
-    storage = HorusStorage(tmp_path / "t.db")
-    return CrawlOrchestrator(storage, Settings(), scraper_cls=lambda **_k: scraper)  # type: ignore[arg-type,return-value]
+@pytest.fixture
+def make_orch(tmp_path: Any) -> Iterator[Callable[[_FakeScraper], CrawlOrchestrator]]:
+    storages: list[HorusStorage] = []
+
+    def _make(scraper: _FakeScraper) -> CrawlOrchestrator:
+        storage = HorusStorage(tmp_path / "t.db")
+        storages.append(storage)
+        return CrawlOrchestrator(storage, Settings(), scraper_cls=lambda **_k: scraper)  # type: ignore[arg-type,return-value]
+
+    yield _make
+    for storage in storages:
+        storage.close()
 
 
-def test_intercept_passes_remaining_quota_per_url(tmp_path: Any) -> None:
+def test_intercept_passes_remaining_quota_per_url(make_orch: Any) -> None:
     scraper = _FakeScraper({"u1": _items("a", 3), "u2": _items("b", 3)})
     asyncio.run(
-        _orch(tmp_path, scraper).run(
+        make_orch(scraper).run(
             _InterceptStub(),
             ["u1", "u2", "u3"],
             site="intercept_stub",
@@ -135,10 +147,10 @@ def test_intercept_passes_remaining_quota_per_url(tmp_path: Any) -> None:
     assert scraper.scrape_calls == [("u1", 5), ("u2", 2)]
 
 
-def test_intercept_limit_zero_is_unlimited(tmp_path: Any) -> None:
+def test_intercept_limit_zero_is_unlimited(make_orch: Any) -> None:
     scraper = _FakeScraper({"u1": _items("a", 3), "u2": _items("b", 3)})
     asyncio.run(
-        _orch(tmp_path, scraper).run(
+        make_orch(scraper).run(
             _InterceptStub(),
             ["u1", "u2"],
             site="intercept_stub",
@@ -151,10 +163,10 @@ def test_intercept_limit_zero_is_unlimited(tmp_path: Any) -> None:
     assert scraper.scrape_calls == [("u1", 0), ("u2", 0)]
 
 
-def test_page_mode_fetches_only_first_limit_urls(tmp_path: Any) -> None:
+def test_page_mode_fetches_only_first_limit_urls(make_orch: Any) -> None:
     scraper = _FakeScraper({})
     asyncio.run(
-        _orch(tmp_path, scraper).run(
+        make_orch(scraper).run(
             _PageStub(),
             ["p1", "p2", "p3"],
             site="page_stub",
@@ -167,10 +179,10 @@ def test_page_mode_fetches_only_first_limit_urls(tmp_path: Any) -> None:
     assert scraper.page_calls == ["p1", "p2"]
 
 
-def test_page_mode_limit_zero_fetches_all(tmp_path: Any) -> None:
+def test_page_mode_limit_zero_fetches_all(make_orch: Any) -> None:
     scraper = _FakeScraper({})
     asyncio.run(
-        _orch(tmp_path, scraper).run(
+        make_orch(scraper).run(
             _PageStub(),
             ["p1", "p2", "p3"],
             site="page_stub",
@@ -181,3 +193,61 @@ def test_page_mode_limit_zero_fetches_all(tmp_path: Any) -> None:
         )
     )
     assert scraper.page_calls == ["p1", "p2", "p3"]
+
+
+def _unattributed(item_id: str) -> ScrapedItem:
+    return ScrapedItem(
+        id=item_id,
+        site_id="intercept_stub",
+        url="",
+        timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+        extra={"is_reply": True},
+    )
+
+
+class _PostStub(_InterceptStub):
+    """is_post_url('post1') -> single-post path; parse_response yields 2 kept + 1 dropped."""
+
+    def is_post_url(self, url: str) -> bool:
+        return url == "post1"
+
+    def parse_response(self, body: dict[str, Any]) -> list[ScrapedItem]:
+        return [*_items("p", 2), _unattributed("c0")]
+
+
+class _InlineScraper(_FakeScraper):
+    async def fetch_inline_json(self, url: str, *_a: Any, **_k: Any) -> dict[str, Any]:
+        return {}
+
+
+def test_single_post_quota_counts_only_kept_items(make_orch: Any) -> None:
+    scraper = _InlineScraper({"u2": _items("b", 1)})
+    asyncio.run(
+        make_orch(scraper).run(
+            _PostStub(),
+            ["post1", "u2"],
+            site="intercept_stub",
+            kwargs={},
+            limit=3,
+            since=None,
+            state_path=None,
+        )
+    )
+    # post1 yields 2 kept + 1 unattributed comment dropped by on_batch → 3 - 2 = 1
+    assert scraper.scrape_calls == [("u2", 1)]
+
+
+def test_scroll_quota_counts_only_kept_items(make_orch: Any) -> None:
+    scraper = _FakeScraper({"u1": [*_items("a", 2), _unattributed("c0")], "u2": _items("b", 1)})
+    asyncio.run(
+        make_orch(scraper).run(
+            _InterceptStub(),
+            ["u1", "u2"],
+            site="intercept_stub",
+            kwargs={},
+            limit=3,
+            since=None,
+            state_path=None,
+        )
+    )
+    assert scraper.scrape_calls == [("u1", 3), ("u2", 1)]

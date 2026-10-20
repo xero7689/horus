@@ -16,6 +16,11 @@ from horus.core.storage import HorusStorage
 from horus.models import ScrapedItem, ScrapedPage
 
 
+def _is_unattributed_comment(item: ScrapedItem) -> bool:
+    """URL-less reply: an intercepted comment awaiting --with-comments attribution."""
+    return bool(item.extra.get("is_reply")) and not item.url
+
+
 class CrawlReporter(Protocol):
     """Frontend-specific output. All methods must be non-blocking and cheap."""
 
@@ -234,7 +239,7 @@ class CrawlOrchestrator:
             # persist from a primary batch. (Threads/twitter replies carry URLs and
             # are unaffected.) This guard runs unconditionally — with or without
             # --with-comments — matching the old IG flag guard's semantics.
-            batch = [p for p in batch if not (p.extra.get("is_reply") and not p.url)]
+            batch = [p for p in batch if not _is_unattributed_comment(p)]
             if not batch:
                 return
             batch = adapter.post_process(batch)
@@ -271,7 +276,7 @@ class CrawlOrchestrator:
                 else:
                     self._reporter.log(f"  [yellow]No post data found at {url}[/yellow]")
                 # Count only what on_batch keeps: URL-less replies are dropped there.
-                remaining -= sum(1 for p in items if not (p.extra.get("is_reply") and not p.url))
+                remaining -= sum(1 for p in items if not _is_unattributed_comment(p))
             else:
                 got = await scraper.scrape(
                     url,
@@ -283,7 +288,8 @@ class CrawlOrchestrator:
                     on_batch=on_batch,
                     limit=remaining if limit else 0,
                 )
-                remaining -= len(got)
+                # Same rule as on_batch: dropped comments don't spend quota.
+                remaining -= sum(1 for p in got if not _is_unattributed_comment(p))
             self._storage.log_crawl(site, url, outcome.total_found, outcome.total_new, started_at)
 
         if with_comments and crawled_top_level:
