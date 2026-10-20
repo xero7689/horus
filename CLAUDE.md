@@ -23,7 +23,7 @@ src/horus/
 │   ├── scraper.py      # BaseScraper（scrape：scroll + response intercept；scrape_page：HTML → Markdown）
 │   ├── orchestrator.py # CrawlOrchestrator（http/page/intercept 三向 dispatch + 儲存副作用；cli/serve 共用）
 │   ├── crawl_plan.py   # resolve_crawl_plan（adapter → urls → 登入狀態；cli/serve 使用，mcp 之後接上）
-│   ├── jobs.py         # JobManager（背景爬取工作；serve 的 CrawlerManager 包在外層只做 SSE，mcp 共用）
+│   ├── jobs.py         # JobManager（背景爬取工作；serve 的 CrawlerManager 包在外層只做 SSE；serve 使用，mcp 之後接上）
 │   ├── dates.py        # parse_since（cli/serve 共用，raises ValueError）
 │   └── storage.py      # HorusStorage（SQLite + FTS5；items + pages 兩張表）
 └── adapters/

@@ -1,6 +1,6 @@
 """Shared crawl prelude: resolve adapter, URLs and login state for one crawl.
 
-Every crawl frontend should start a crawl through this (cli does today); each
+Every crawl frontend should start a crawl through this (cli and serve do today); each
 frontend only decides how to surface the ValueError and what to do about a
 missing login state.
 """

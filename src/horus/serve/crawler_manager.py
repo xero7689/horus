@@ -25,7 +25,7 @@ class CrawlerManager:
         self._jobs = JobManager(
             settings,
             storage_factory=lambda: HorusStorage(settings.resolved_db_path),
-            scraper_cls=BaseScraper,  # module-level name: patchable in tests like cli
+            scraper_cls=BaseScraper,
             on_event=self._broadcast,
         )
 
