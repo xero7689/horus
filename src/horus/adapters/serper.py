@@ -18,7 +18,7 @@ import httpx
 
 from horus.adapters._io import read_stdin_lines, stable_item_id
 from horus.adapters.base import SiteAdapter
-from horus.config import Settings
+from horus.config import Settings, env_files
 from horus.models import ScrapedItem
 
 _SERPER_URL = "https://google.serper.dev/search"
@@ -127,18 +127,18 @@ class SerperAdapter(SiteAdapter):
                 file=sys.stderr,
             )
 
-        # _env_file=None (tests with injected transport) reads only process env, not the
-        # real .env; pydantic-settings accepts this init kwarg at runtime (ty can't see it).
-        settings = (
-            Settings(_env_file=None)  # ty: ignore[unknown-argument]
-            if self._transport
-            else Settings()
-        )
+        # _env_file=None (tests with injected transport) reads only process env,
+        # not the real .env files.
+        settings = Settings(_env_file=None) if self._transport else Settings()
         api_key = settings.serper_api_key
         if not api_key:
+            # Name the files that were searched: the usual cause is running the
+            # global CLI from a directory whose .env is not the one holding the key.
+            searched = " or ".join(str(path) for path in env_files())
             raise ValueError(
-                "serper adapter requires HORUS_SERPER_API_KEY env var "
-                "(set it in .env or export it). Never pass as a CLI flag."
+                "serper adapter requires HORUS_SERPER_API_KEY env var. "
+                f"Not found in the process env, {searched}. "
+                "Set it in one of those files or export it. Never pass as a CLI flag."
             )
 
         items: list[ScrapedItem] = []

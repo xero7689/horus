@@ -32,14 +32,18 @@ def test_crawl_missing_api_key_prints_clean_error(monkeypatch, tmp_path) -> None
 
     Uses an isolated filesystem so the developer's real repo-root .env (which holds
     a working key) is not picked up by Settings() — otherwise the un-patched adapter
-    would silently succeed instead of raising the missing-key ValueError.
+    would silently succeed instead of raising the missing-key ValueError. HORUS_BASE_DIR
+    is redirected for the same reason: `~/.horus/.env` is a real lookup path too.
     """
     monkeypatch.setenv("HORUS_DB_PATH", str(tmp_path / "t.db"))
+    monkeypatch.setenv("HORUS_BASE_DIR", str(tmp_path / "empty-home"))
     monkeypatch.delenv("HORUS_SERPER_API_KEY", raising=False)
     runner = CliRunner()
     with runner.isolated_filesystem():
         result = runner.invoke(main, ["crawl", "serper", "--query", "x", "--limit", "10"])
     assert result.exit_code == 1, result.output
     assert "HORUS_SERPER_API_KEY" in result.output
+    # The message names where it looked — the usual cause is a CWD-dependent .env.
+    assert ".env" in result.output
     # No raw traceback leaked to the user.
     assert "Traceback" not in result.output
