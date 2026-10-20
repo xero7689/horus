@@ -1,7 +1,8 @@
 """Shared crawl prelude: resolve adapter, URLs and login state for one crawl.
 
-cli, serve and mcp all start a crawl the same way; each frontend only decides
-how to surface the ValueError and what to do about a missing login state.
+Every crawl frontend should start a crawl through this (cli does today); each
+frontend only decides how to surface the ValueError and what to do about a
+missing login state.
 """
 
 from dataclasses import dataclass

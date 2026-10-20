@@ -228,7 +228,7 @@ async def _crawl(
     except (KeyboardInterrupt, asyncio.CancelledError):
         outcome.interrupted = True
     except (ValueError, RuntimeError) as e:
-        # Was the http-mode sys.exit path (known divergence #1: now wraps all modes).
+        # Adapter/runtime failures in any mode: report and exit non-zero.
         console.print(f"[red]{e}[/red]")
         storage.close()
         sys.exit(1)

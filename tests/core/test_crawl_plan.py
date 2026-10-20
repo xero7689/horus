@@ -1,4 +1,4 @@
-"""resolve_crawl_plan: the shared crawl prelude used by cli / serve / mcp."""
+"""resolve_crawl_plan: the shared crawl prelude (adapter, URLs, login state)."""
 
 from pathlib import Path
 from typing import Any
