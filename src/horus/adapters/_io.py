@@ -7,13 +7,26 @@ the SiteAdapter contract, so adapter independence is preserved.
 import hashlib
 import sys
 
+# Set by `horus mcp`: under the MCP stdio transport, stdin carries protocol
+# messages and is not a TTY, so adapters must never read it as a URL list.
+_stdin_disabled = False
+
+
+def disable_stdin() -> None:
+    """Make read_stdin_lines() always return [] for the rest of the process."""
+    global _stdin_disabled
+    _stdin_disabled = True
+
 
 def read_stdin_lines(*, skip_comments: bool = False) -> list[str]:
     """Read non-empty stripped lines from a piped stdin.
 
     Returns [] when stdin is a TTY (interactive) or unreadable — callers fall
-    through to their own "missing required option" error.
+    through to their own "missing required option" error. Returns [] after
+    disable_stdin() (MCP stdio mode).
     """
+    if _stdin_disabled:
+        return []
     if not (hasattr(sys.stdin, "isatty") and not sys.stdin.isatty()):
         return []
     try:

@@ -3,6 +3,7 @@
 import io
 from typing import Any
 
+from horus.adapters import _io
 from horus.adapters._io import read_stdin_lines, stable_item_id
 
 
@@ -14,6 +15,13 @@ class _FakeStdin(io.StringIO):
 def test_read_stdin_lines_basic(monkeypatch: Any) -> None:
     monkeypatch.setattr("sys.stdin", _FakeStdin("  a \n\nb\n"))
     assert read_stdin_lines() == ["a", "b"]
+
+
+def test_disable_stdin_makes_read_return_empty(monkeypatch: Any) -> None:
+    monkeypatch.setattr("sys.stdin", _FakeStdin("line-a\nline-b\n"))
+    monkeypatch.setattr(_io, "_stdin_disabled", False)
+    _io.disable_stdin()
+    assert read_stdin_lines() == []
 
 
 def test_read_stdin_lines_skip_comments(monkeypatch: Any) -> None:
