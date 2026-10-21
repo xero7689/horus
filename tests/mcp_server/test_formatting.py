@@ -22,6 +22,7 @@ def _item(text: str | None) -> ScrapedItem:
         site_id="threads",
         url="https://e.com/1",
         text=text,
+        author_id="u1",
         author_name="alice",
         timestamp=_TS,
         extra={"like_count": 3},
@@ -34,6 +35,7 @@ def test_item_summary_truncates_long_text() -> None:
     assert d["text_truncated"] is True
     assert d["timestamp"] == _TS.isoformat()
     assert d["extra"] == {"like_count": 3}
+    assert d["author_id"] == "u1" and d["author_name"] == "alice"
 
 
 def test_item_summary_short_and_missing_text() -> None:
@@ -46,6 +48,7 @@ def test_item_full_keeps_whole_text() -> None:
     d = item_full(_item("x" * 2000))
     assert len(d["text"]) == 2000
     assert "text_truncated" not in d
+    assert d["author_id"] == "u1"
 
 
 def test_page_summary_and_full() -> None:
@@ -54,6 +57,7 @@ def test_page_summary_and_full() -> None:
     )
     assert page_summary(page) == {
         "url": "https://e.com",
+        "site_id": "web",
         "title": "T",
         "fetched_at": _TS.isoformat(),
     }

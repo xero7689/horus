@@ -13,14 +13,9 @@ EXPOSED_CRAWL_PARAMS = frozenset({"user", "url", "query", "mode", "with_comments
 
 
 def _item_base(item: ScrapedItem) -> dict[str, Any]:
-    return {
-        "site_id": item.site_id,
-        "id": item.id,
-        "url": item.url,
-        "author_name": item.author_name,
-        "timestamp": item.timestamp.isoformat(),
-        "extra": item.extra,
-    }
+    # All model fields, so new ones (author_id, ...) reach the agent without
+    # edits here; timestamp keeps isoformat like the CSV export.
+    return {**item.model_dump(mode="json"), "timestamp": item.timestamp.isoformat()}
 
 
 def item_summary(item: ScrapedItem) -> dict[str, Any]:
@@ -37,13 +32,21 @@ def item_full(item: ScrapedItem) -> dict[str, Any]:
     return {**_item_base(item), "text": item.text or ""}
 
 
+def _page_base(page: ScrapedPage) -> dict[str, Any]:
+    data = page.model_dump(mode="json")
+    data["fetched_at"] = page.fetched_at.isoformat()
+    return data
+
+
 def page_summary(page: ScrapedPage) -> dict[str, Any]:
-    return {"url": page.url, "title": page.title, "fetched_at": page.fetched_at.isoformat()}
+    data = _page_base(page)
+    del data["markdown"]
+    return data
 
 
 def page_full(page: ScrapedPage, *, max_chars: int) -> dict[str, Any]:
     return {
-        **page_summary(page),
+        **_page_base(page),
         "markdown": page.markdown[:max_chars],
         "truncated": len(page.markdown) > max_chars,
     }

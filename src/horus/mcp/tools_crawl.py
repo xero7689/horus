@@ -72,10 +72,21 @@ def register(server: MCPServer, state: McpState) -> None:
 
         Waits up to wait_seconds (0-600). Finished → status=done with counts and
         refs (item ids or page urls). Still running → status=running with job_id;
-        poll crawl_status. limit caps items per profile/post (0 = unlimited; a
-        stop threshold, the last batch is kept whole). since (YYYY-MM-DD) applies
-        to scrolling feeds only. Login is never done here: if a site needs it,
-        run `horus login <site>` in a terminal.
+        poll crawl_status.
+
+        limit caps items per profile/post (0 = unlimited; a stop threshold, the
+        last batch is kept whole). Web pages are not limited by it. For serper,
+        limit is the number of results requested (10-100); limit > 10 costs 2
+        credits per query instead of 1.
+
+        since (YYYY-MM-DD) applies to scrolling feeds only. If omitted, the crawl
+        is incremental per SITE, not per account: only posts newer than the
+        newest stored post of that site are fetched. For the first crawl of a
+        new account on a site that already has data, pass an early since (e.g.
+        "2000-01-01") or older posts are silently skipped.
+
+        Login is never done here: if a site needs it, run `horus login <site>`
+        in a terminal.
         """
         if not (user or url or query):
             raise ToolError(f"crawl needs one of user / url / query.{_params_hint(site)}")

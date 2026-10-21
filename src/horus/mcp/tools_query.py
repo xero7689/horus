@@ -42,7 +42,8 @@ def register(server: MCPServer, state: McpState) -> None:
     @server.tool()
     async def search(query: str, site: str | None = None, limit: int = 20) -> dict[str, Any]:
         """Full-text search stored posts (CJK supported). Text is previewed;
-        call get_item for the full text."""
+        call get_item for the full text. limit is clamped to 1-200 (unlike
+        crawl, 0 does not mean unlimited)."""
         items = storage.search(query, site_id=site, limit=_clamp(limit))
         return {"items": [item_summary(i) for i in items]}
 
@@ -53,7 +54,9 @@ def register(server: MCPServer, state: McpState) -> None:
         since: str | None = None,
         limit: int = 20,
     ) -> dict[str, Any]:
-        """List stored posts, newest first, filtered by site / author / since (YYYY-MM-DD)."""
+        """List stored posts, newest first, filtered by site / author / since (YYYY-MM-DD).
+
+        limit is clamped to 1-200 (unlike crawl, 0 does not mean unlimited)."""
         try:
             since_dt = parse_since(since) if since else None
         except ValueError as e:
@@ -83,7 +86,9 @@ def register(server: MCPServer, state: McpState) -> None:
 
     @server.tool()
     async def pages(site: str | None = None, limit: int = 20) -> dict[str, Any]:
-        """List stored web pages (url, title, fetched_at), newest first."""
+        """List stored web pages (url, site_id, title, fetched_at), newest first.
+
+        limit is clamped to 1-200 (unlike crawl, 0 does not mean unlimited)."""
         stored = storage.get_pages(site_id=site, limit=_clamp(limit))
         return {"pages": [page_summary(p) for p in stored]}
 
