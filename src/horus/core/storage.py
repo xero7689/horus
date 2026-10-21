@@ -197,7 +197,11 @@ class HorusStorage:
         site_id: str | None = None,
         limit: int = 50,
     ) -> list[ScrapedItem]:
-        """FTS5 full-text search. Short queries (<3 chars) fallback to LIKE."""
+        """FTS5 full-text search. Short queries (<3 chars) fallback to LIKE.
+
+        Each whitespace-separated term is matched literally (substring), not as
+        FTS5 syntax; all terms must appear (implicit AND).
+        """
         use_fts = len(query) >= 3
         if use_fts:
             sql = (
@@ -205,7 +209,14 @@ class HorusStorage:
                 "JOIN items_fts ON i.rowid = items_fts.rowid "
                 "WHERE items_fts MATCH ?"
             )
-            params: list[str | int] = [query]
+            # Quote each whitespace-separated term as its own FTS5 phrase:
+            # punctuation (. ' - +) and bare AND/OR/NOT match literally instead of
+            # being parsed as query syntax, while terms keep FTS5's implicit AND.
+            terms = query.split()
+            if not terms:
+                return []
+            match = " ".join('"' + t.replace('"', '""') + '"' for t in terms)
+            params: list[str | int] = [match]
         else:
             sql = "SELECT i.* FROM items i WHERE i.text LIKE ?"
             params: list[str | int] = [f"%{query}%"]
