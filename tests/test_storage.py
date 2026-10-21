@@ -194,6 +194,19 @@ class TestSearch:
         results = storage.search(query)
         assert [r.id for r in results] == ["1"]
 
+    def test_terms_are_anded_not_adjacent(self, storage: HorusStorage) -> None:
+        storage.upsert_items(
+            [
+                _item("1", text="hello big world"),
+                _item("2", text="hello there"),
+            ]
+        )
+        assert [r.id for r in storage.search("hello world")] == ["1"]
+
+    def test_whitespace_only_query_returns_empty(self, storage: HorusStorage) -> None:
+        storage.upsert_items([_item("1", text="hello world")])
+        assert storage.search("     ") == []
+
     def test_double_quote_in_query(self, storage: HorusStorage) -> None:
         storage.upsert_items([_item("1", text='he said "hello" loudly')])
         assert [r.id for r in storage.search('"hello"')] == ["1"]
