@@ -86,16 +86,15 @@ async def test_crawl_finishes_within_wait(client) -> None:
     assert res["items_found"] == 3 and res["refs"] == ["r0", "r1", "r2"]
 
 
-async def test_crawl_goes_background_then_status_reports_done(client) -> None:
+async def test_crawl_goes_background_then_status_reports_done(client, state: McpState) -> None:
     _FakeSearch.gate = asyncio.Event()
     res = await call(client, "crawl", site="fake_search", query="q", wait_seconds=0)
     assert res["status"] == "running"
     _FakeSearch.gate.set()
-    for _ in range(50):
-        status = await call(client, "crawl_status", job_id=res["job_id"])
-        if status["status"] == "done":
-            break
-        await asyncio.sleep(0.01)
+    job = state.jobs.get(res["job_id"])
+    assert job is not None and job.task is not None
+    await asyncio.wait_for(job.task, 5)
+    status = await call(client, "crawl_status", job_id=res["job_id"])
     assert status["status"] == "done" and status["items_found"] == 3
 
 
@@ -145,6 +144,20 @@ async def test_cancel_and_unknown_job(client) -> None:
     assert (await call(client, "crawl_cancel", job_id=res["job_id"]))["cancelled"] is True
     assert "restart" in await call_error(client, "crawl_status", job_id="deadbeef")
     assert "restart" in await call_error(client, "crawl_cancel", job_id="deadbeef")
+
+
+async def test_cancel_during_wait_returns_cancelled_payload(client, state: McpState) -> None:
+    _FakeSearch.gate = asyncio.Event()
+
+    async def cancel_when_running() -> None:
+        while not (jobs := state.jobs.list_jobs()):
+            await asyncio.sleep(0)
+        state.jobs.cancel(jobs[0].job_id)
+
+    canceller = asyncio.create_task(cancel_when_running())
+    res = await call(client, "crawl", site="fake_search", query="q", wait_seconds=5)
+    await canceller
+    assert res["status"] == "cancelled"
 
 
 async def test_shutdown_cancels_running_jobs(client, state: McpState) -> None:
