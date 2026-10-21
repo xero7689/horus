@@ -11,6 +11,8 @@ from horus.mcp.formatting import crawl_params, item_full, item_summary, page_ful
 from horus.mcp.state import McpState
 
 _MAX_LIMIT = 200
+_MAX_THREAD_ITEMS = 100
+_MAX_PAGE_CHARS = 200_000
 
 
 def _clamp(limit: int) -> int:
@@ -63,16 +65,20 @@ def register(server: MCPServer, state: McpState) -> None:
 
     @server.tool()
     async def get_item(site: str, item_id: str, include_thread: bool = False) -> dict[str, Any]:
-        """Full text of one stored post; include_thread adds the whole conversation."""
+        """Full text of one stored post.
+
+        include_thread adds the conversation (up to 100 items, text previewed;
+        thread_truncated=true if cut). Call get_item on any member for its full text.
+        """
         item = storage.get_item(site, item_id)
         if item is None:
             raise ToolError(f"No stored item {item_id!r} for site {site!r}.")
         result: dict[str, Any] = {"item": item_full(item)}
         if include_thread:
             conversation_id = str(item.extra.get("conversation_id") or item.id)
-            result["thread"] = [
-                item_full(i) for i in storage.get_thread_items(site, conversation_id)
-            ]
+            thread = storage.get_thread_items(site, conversation_id)
+            result["thread"] = [item_summary(i) for i in thread[:_MAX_THREAD_ITEMS]]
+            result["thread_truncated"] = len(thread) > _MAX_THREAD_ITEMS
         return result
 
     @server.tool()
@@ -83,13 +89,14 @@ def register(server: MCPServer, state: McpState) -> None:
 
     @server.tool()
     async def get_page(url: str, max_chars: int = 20000) -> dict[str, Any]:
-        """Markdown of one stored page, cut at max_chars (truncated=true if cut)."""
+        """Markdown of one stored page, cut at max_chars (at most 200000;
+        truncated=true if cut)."""
         page = storage.get_page(url)
         if page is None:
             raise ToolError(
                 f"No stored page for {url}. Crawl it first with crawl(site='web', url=...)."
             )
-        return page_full(page, max_chars=max(1, max_chars))
+        return page_full(page, max_chars=max(1, min(max_chars, _MAX_PAGE_CHARS)))
 
     @server.tool()
     async def stats(site: str | None = None) -> dict[str, Any]:

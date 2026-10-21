@@ -59,6 +59,7 @@ async def test_get_item_with_thread_uses_conversation_id(client, state: McpState
     res = await call(client, "get_item", site="threads", item_id="reply", include_thread=True)
     assert res["item"]["id"] == "reply"
     assert {i["id"] for i in res["thread"]} == {"root", "reply"}
+    assert res["thread_truncated"] is False
 
 
 async def test_get_item_not_found(client) -> None:
@@ -77,3 +78,32 @@ async def test_pages_and_get_page(client, state: McpState) -> None:
 async def test_stats(client, state: McpState) -> None:
     _seed(state)
     assert isinstance(await call(client, "stats"), dict)
+
+
+async def test_get_item_thread_is_capped_and_previewed(client, state: McpState) -> None:
+    state.storage.upsert_items(
+        [
+            ScrapedItem(
+                id=f"t{i:03d}",
+                site_id="threads",
+                url=f"https://e.com/t{i}",
+                text="x" * 1000,
+                author_name="alice",
+                timestamp=datetime(2026, 1, 1, 0, i // 60, i % 60, tzinfo=UTC),
+                extra={"conversation_id": "t000"},
+            )
+            for i in range(105)
+        ]
+    )
+    res = await call(client, "get_item", site="threads", item_id="t000", include_thread=True)
+    assert len(res["item"]["text"]) == 1000
+    assert len(res["thread"]) == 100 and res["thread_truncated"] is True
+    assert res["thread"][0]["text_truncated"] is True
+
+
+async def test_get_page_clamps_max_chars(client, state: McpState) -> None:
+    state.storage.upsert_page(
+        ScrapedPage(url="https://e.com/big", site_id="web", title="B", markdown="m" * 200_010)
+    )
+    page = await call(client, "get_page", url="https://e.com/big", max_chars=10**9)
+    assert len(page["markdown"]) == 200_000 and page["truncated"] is True

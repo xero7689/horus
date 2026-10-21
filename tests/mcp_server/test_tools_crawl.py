@@ -144,6 +144,7 @@ async def test_cancel_and_unknown_job(client) -> None:
     res = await call(client, "crawl", site="fake_search", query="q", wait_seconds=0)
     assert (await call(client, "crawl_cancel", job_id=res["job_id"]))["cancelled"] is True
     assert "restart" in await call_error(client, "crawl_status", job_id="deadbeef")
+    assert "restart" in await call_error(client, "crawl_cancel", job_id="deadbeef")
 
 
 async def test_shutdown_cancels_running_jobs(client, state: McpState) -> None:

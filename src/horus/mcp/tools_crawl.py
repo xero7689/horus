@@ -46,6 +46,13 @@ def _params_hint(site: str) -> str:
     return f" {site} accepts: {', '.join(names)}." if names else ""
 
 
+def _unknown_job(job_id: str) -> ToolError:
+    return ToolError(
+        f"Unknown job_id {job_id!r}. Job records live in memory and are "
+        "cleared when the MCP server restarts; stored items remain."
+    )
+
+
 def register(server: MCPServer, state: McpState) -> None:
     @server.tool()
     async def crawl(
@@ -123,13 +130,14 @@ def register(server: MCPServer, state: McpState) -> None:
         """Status, live counts, refs, last 20 log lines and error of a crawl job."""
         job = state.jobs.get(job_id)
         if job is None:
-            raise ToolError(
-                f"Unknown job_id {job_id!r}. Job records live in memory and are "
-                "cleared when the MCP server restarts; stored items remain."
-            )
+            raise _unknown_job(job_id)
         return job_payload(job)
 
     @server.tool()
     async def crawl_cancel(job_id: str) -> dict[str, Any]:
-        """Cancel a running crawl. Items already stored are kept."""
+        """Cancel a running crawl. Items already stored are kept.
+
+        cancelled=false means the job had already finished."""
+        if state.jobs.get(job_id) is None:
+            raise _unknown_job(job_id)
         return {"job_id": job_id, "cancelled": state.jobs.cancel(job_id)}
