@@ -107,3 +107,20 @@ async def test_get_page_clamps_max_chars(client, state: McpState) -> None:
     )
     page = await call(client, "get_page", url="https://e.com/big", max_chars=10**9)
     assert len(page["markdown"]) == 200_000 and page["truncated"] is True
+
+
+async def test_search_with_punctuation(client, state: McpState) -> None:
+    state.storage.upsert_items(
+        [
+            ScrapedItem(
+                id="dot",
+                site_id="web",
+                url="https://e.com/dot",
+                text="see example.com for what's new",
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+        ]
+    )
+    found = (await call(client, "search", query="example.com"))["items"]
+    assert [i["id"] for i in found] == ["dot"]
+    assert (await call(client, "search", query="what's"))["items"][0]["id"] == "dot"

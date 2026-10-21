@@ -197,7 +197,10 @@ class HorusStorage:
         site_id: str | None = None,
         limit: int = 50,
     ) -> list[ScrapedItem]:
-        """FTS5 full-text search. Short queries (<3 chars) fallback to LIKE."""
+        """FTS5 full-text search. Short queries (<3 chars) fallback to LIKE.
+
+        The query is matched as a literal phrase (substring), not FTS5 syntax.
+        """
         use_fts = len(query) >= 3
         if use_fts:
             sql = (
@@ -205,7 +208,11 @@ class HorusStorage:
                 "JOIN items_fts ON i.rowid = items_fts.rowid "
                 "WHERE items_fts MATCH ?"
             )
-            params: list[str | int] = [query]
+            # Quote as one FTS5 phrase so punctuation (. ' - +) and bare AND/OR/NOT
+            # are matched literally instead of parsed as query syntax; the trigram
+            # tokenizer still matches substrings.
+            phrase = '"' + query.replace('"', '""') + '"'
+            params: list[str | int] = [phrase]
         else:
             sql = "SELECT i.* FROM items i WHERE i.text LIKE ?"
             params: list[str | int] = [f"%{query}%"]
