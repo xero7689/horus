@@ -119,8 +119,9 @@ horus mcp                                        # stdio MCP server，給 agent 
 - **MCP server（`horus mcp`）**：只提供 tools（無 resources/prompts）；`crawl` 等到 `wait_seconds`
   （預設 45、上限 600）還沒完成就回 `job_id` 轉背景，agent 用 `crawl_status` 輪詢；同一站一次只跑
   一個（MCP 專屬政策，serve 不套用）；不做登入，缺登入狀態時要使用者在終端跑 `horus login <site>`。
-  stdio 紀律：`disable_stdin()` 讓 adapter 不會把協定訊息當 URL 清單讀，stdout 只放協定訊息
-  （console 一律 stderr）。背景工作跟著 server 程序，agent 關掉就中斷
+  stdio 紀律：stdin 由 `disable_stdin()` 關閉（adapter 不會把協定訊息當 URL 清單讀）；MCP 路徑上
+  沒有任何輸出寫到 stdout，stdout 只放協定訊息（只有 login 會 print 到 stdout，MCP 不開放 login）。
+  背景工作跟著 server 程序，agent 關掉就中斷
 - **ScrapedItem.extra**：site-specific 欄位存 JSON dict，避免多表 migration
 - **response_filter 簽名**：`(url: str, body: dict) -> bool`，雙重過濾（URL pattern + body 結構）
 - **State 儲存**：`~/.horus/states/<site_id>.json`，per-site Playwright storage_state
