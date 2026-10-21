@@ -18,6 +18,8 @@ class _FakeSearch(SiteAdapter):
     has_http_mode = True
     gate: asyncio.Event | None = None
     fail_with: Exception | None = None
+    # Set to keep a cancelled crawl alive while it "closes the browser".
+    closing: asyncio.Event | None = None
 
     def get_urls(self, **kwargs: Any) -> list[str]:
         return []
@@ -27,7 +29,12 @@ class _FakeSearch(SiteAdapter):
 
     async def fetch_items(self, **kwargs: Any) -> list[ScrapedItem]:
         if type(self).gate is not None:
-            await type(self).gate.wait()
+            try:
+                await type(self).gate.wait()
+            except asyncio.CancelledError:
+                if type(self).closing is not None:
+                    await type(self).closing.wait()
+                raise
         if type(self).fail_with is not None:
             raise type(self).fail_with
         return [
@@ -51,6 +58,21 @@ class _NeedsLogin(SiteAdapter):
         return ["https://e.com/x"]
 
 
+class _NeedsUser(SiteAdapter):
+    site_id = "fake_user"
+    display_name = "Fake User"
+    login_url = ""
+    requires_login = False
+
+    def get_crawl_options(self) -> list[dict[str, Any]]:
+        return [{"name": "--user", "help": "u", "required": True, "default": None}]
+
+    def get_urls(self, **kwargs: Any) -> list[str]:
+        if "user" not in kwargs:
+            raise ValueError("--user is required")
+        return [f"https://e.com/{kwargs['user']}"]
+
+
 class _BadUrlList(SiteAdapter):
     site_id = "fake_bad"
     display_name = "Fake Bad"
@@ -65,10 +87,12 @@ class _BadUrlList(SiteAdapter):
 def fake_registry(monkeypatch: pytest.MonkeyPatch) -> None:
     _FakeSearch.gate = None
     _FakeSearch.fail_with = None
+    _FakeSearch.closing = None
     table: dict[str, type[SiteAdapter]] = {
         "fake_search": _FakeSearch,
         "fake_login": _NeedsLogin,
         "fake_bad": _BadUrlList,
+        "fake_user": _NeedsUser,
     }
 
     def fake_get_adapter(site: str) -> type[SiteAdapter]:
@@ -110,6 +134,9 @@ async def test_failure_within_wait_is_tool_error(client) -> None:
     _FakeSearch.fail_with = RuntimeError("upstream 500")
     err = await call_error(client, "crawl", site="fake_search", query="q")
     assert "RuntimeError: upstream 500" in err
+    assert "0 new items stored" in err and "crawl_status" in err
+    job_id = err.split("(job ")[1].split(",")[0]
+    assert (await call(client, "crawl_status", job_id=job_id))["status"] == "failed"
 
 
 async def test_missing_inputs_lists_params(client) -> None:
@@ -124,6 +151,21 @@ async def test_unknown_site(client) -> None:
 async def test_non_value_error_from_plan_names_the_cause(client) -> None:
     err = await call_error(client, "crawl", site="fake_bad", url="/tmp")
     assert "IsADirectoryError: [Errno 21] Is a directory" in err
+
+
+async def test_plan_value_error_appends_mcp_param_names(client) -> None:
+    err = await call_error(client, "crawl", site="fake_user", url="https://e.com/x")
+    assert "--user is required" in err and "fake_user accepts: user." in err
+
+
+async def test_recrawl_right_after_cancel_is_accepted(client) -> None:
+    _FakeSearch.gate = asyncio.Event()
+    _FakeSearch.closing = asyncio.Event()
+    first = await call(client, "crawl", site="fake_search", query="q", wait_seconds=0)
+    assert (await call(client, "crawl_cancel", job_id=first["job_id"]))["cancelled"] is True
+    second = await call(client, "crawl", site="fake_search", query="q", wait_seconds=0)
+    assert second["job_id"] != first["job_id"]
+    _FakeSearch.closing.set()
 
 
 async def test_missing_login_state_says_run_login(client) -> None:

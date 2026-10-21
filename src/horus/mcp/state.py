@@ -21,8 +21,21 @@ class McpState:
 
     def running_job_for(self, site: str) -> CrawlJob | None:
         """MCP-only policy: one crawl per site (same login state, two browsers
-        looks like a bot). Serve does not apply this."""
-        return next((j for j in self.jobs.list_jobs() if j.site == site and not j.finished), None)
+        looks like a bot). Serve does not apply this.
+
+        A job already being cancelled (browser still closing) does not count, so
+        a crawl right after crawl_cancel is accepted.
+        """
+        return next(
+            (
+                j
+                for j in self.jobs.list_jobs()
+                if j.site == site
+                and not j.finished
+                and not (j.task is not None and j.task.cancelling() > 0)
+            ),
+            None,
+        )
 
     async def shutdown(self) -> None:
         tasks = [j.task for j in self.jobs.list_jobs() if j.task and not j.task.done()]

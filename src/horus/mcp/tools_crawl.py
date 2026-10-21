@@ -117,7 +117,8 @@ def register(server: MCPServer, state: McpState) -> None:
         try:
             plan = resolve_crawl_plan(site, kwargs, state.settings)
         except ValueError as e:
-            raise ToolError(str(e)) from e
+            # Adapter messages name CLI flags (--user); add the MCP param names.
+            raise ToolError(f"{e}{_params_hint(site)}") from e
         except Exception as e:
             # Adapters can raise anything from get_urls (e.g. IsADirectoryError);
             # name the cause instead of the SDK's generic "Error executing tool".
@@ -133,7 +134,10 @@ def register(server: MCPServer, state: McpState) -> None:
         # asyncio.wait, not wait_for: on timeout the crawl must keep running.
         await asyncio.wait({job.task}, timeout=wait_seconds)
         if job.status == JobStatus.FAILED:
-            raise ToolError(format_job_error(job) or "crawl failed")
+            raise ToolError(
+                f"{format_job_error(job) or 'crawl failed'} (job {job.job_id}, "
+                f"{job.items_new} new items stored; see crawl_status)"
+            )
         return job_payload(job)
 
     @server.tool()
