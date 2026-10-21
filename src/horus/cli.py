@@ -511,6 +511,15 @@ def serve(host: str, port: int) -> None:
     uvicorn.run("horus.serve.app:app", host=host, port=port)
 
 
+@main.command("mcp")
+def mcp_server() -> None:
+    """Run the Horus MCP server over stdio (Claude Code, Codex, Gemini CLI, OpenCode)."""
+    # Lazy import keeps plain CLI startup free of the MCP SDK.
+    from horus.mcp.server import run_stdio
+
+    asyncio.run(run_stdio(_get_settings()))
+
+
 # ---------------------------------------------------------------------------
 # display helpers
 # ---------------------------------------------------------------------------
