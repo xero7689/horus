@@ -45,7 +45,8 @@ class CrawlerManager:
         """Start a crawl.
 
         Raises:
-            ValueError: unknown site or rejected kwargs (routes map it to 400).
+            ValueError: unknown site, rejected kwargs, or any other setup
+                failure (wrapped; routes map it to 400).
         """
         # The crawl form posts option names like "with-comments"; adapters and the
         # orchestrator read "with_comments" (CLI-style normalization).
@@ -56,7 +57,15 @@ class CrawlerManager:
                 since_dt = parse_since(since)
             except ValueError:
                 pass  # serve keeps silent-fallback semantics (documented divergence)
-        plan = resolve_crawl_plan(site, normalized, self._settings)
+        try:
+            plan = resolve_crawl_plan(site, normalized, self._settings)
+        except ValueError:
+            raise
+        except Exception as e:
+            # Setup errors (unreadable url_list, malformed kwargs types) used to
+            # surface as a FAILED job; the route maps ValueError to a 400 JSON
+            # detail the crawl form can show, whereas anything else is a bare 500.
+            raise ValueError(f"{type(e).__name__}: {e}") from e
         return self._jobs.submit(plan, normalized, limit=limit, since=since_dt)
 
     def cancel(self, job_id: str) -> bool:

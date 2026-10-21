@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from horus.adapters import get_adapter
 from horus.config import Settings
 from horus.models import ScrapedItem
 from horus.serve.crawler_manager import CrawlerManager, JobStatus
@@ -77,3 +78,27 @@ async def test_subscribers_receive_sse_formatted_events(manager: CrawlerManager)
         messages.append(q.get_nowait())
     manager.unsubscribe(job.job_id, q)
     assert any(m.startswith("event: done\n") for m in messages)
+
+
+async def test_unknown_site_raises_value_error_and_leaves_no_job(
+    monkeypatch: pytest.MonkeyPatch, manager: CrawlerManager
+) -> None:
+    monkeypatch.setattr("horus.core.crawl_plan.get_adapter", get_adapter)  # undo fixture patch
+    with pytest.raises(ValueError):
+        manager.submit("no-such-site", {})
+    assert manager.list_jobs() == []
+
+
+async def test_non_value_error_in_setup_becomes_value_error(
+    monkeypatch: pytest.MonkeyPatch, manager: CrawlerManager
+) -> None:
+    class _BadUrlsAdapter(_FakeHttpAdapter):
+        has_http_mode = False
+
+        def get_urls(self, **kwargs: Any) -> list[str]:
+            raise IsADirectoryError("x")
+
+    monkeypatch.setattr("horus.core.crawl_plan.get_adapter", lambda _site: _BadUrlsAdapter)
+    with pytest.raises(ValueError, match="IsADirectoryError"):
+        manager.submit("fake-http", {"url_list": "/tmp"})
+    assert manager.list_jobs() == []
