@@ -169,9 +169,9 @@ def test_empty_body_returns_empty() -> None:
     assert TwitterAdapter().parse_response({}) == []
 
 
-def test_profile_author() -> None:
+def test_is_profile_url() -> None:
     a = TwitterAdapter()
-    assert a.profile_author("https://x.com/NASA") == "NASA"
-    assert a.profile_author("https://x.com/NASA/with_replies") == "NASA"
-    assert a.profile_author("https://x.com/NASA/status/123") is None
-    assert a.profile_author("https://x.com/") is None
+    assert a.is_profile_url("https://x.com/NASA")
+    assert a.is_profile_url("https://x.com/NASA/with_replies")
+    assert not a.is_profile_url("https://x.com/NASA/status/123")
+    assert not a.is_profile_url("https://x.com/")

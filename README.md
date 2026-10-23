@@ -11,7 +11,7 @@ Built for sites that are hard to access via traditional APIs — handles login f
 - **Two crawl modes**:
   - *Response interception* — captures API/GraphQL responses (e.g. Threads)
   - *Page mode* — fetches full rendered HTML → converts to Markdown (any public site)
-- **Incremental crawls** — each profile resumes from that account's newest stored post
+- **Incremental crawls** — each profile URL resumes from where its last crawl started
 - **Graceful Ctrl+C** — saves in-progress data before exiting
 - **SQLite + FTS5** — full-text search with CJK (Chinese/Japanese/Korean) support
 - **Export** — JSON, CSV, or Markdown

@@ -81,9 +81,10 @@ def register(server: MCPServer, state: McpState) -> None:
 
         since (YYYY-MM-DD) applies to every scrolled URL (profiles, X statuses);
         threads / instagram single-post URLs ignore it. If omitted, each profile
-        crawl is incremental per account: only posts newer than that account's
-        newest stored post are fetched (a first crawl of an account starts from
-        its latest posts), and single-post / status URLs get no cutoff.
+        URL is incremental: only posts newer than the start of its last crawl
+        that found items are fetched. A profile URL never crawled before (posts
+        and replies tabs count separately) starts from its latest posts, and
+        single-post / status URLs get no cutoff.
 
         Login is never done here: if a site needs it, run `horus login <site>`
         in a terminal.

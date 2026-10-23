@@ -299,11 +299,9 @@ class TwitterAdapter(SiteAdapter):
             return [self._profile_url(u, mode) for u in usernames]
         raise ValueError("twitter adapter requires --user or --url")
 
-    def profile_author(self, url: str) -> str | None:
+    def is_profile_url(self, url: str) -> bool:
         m = _PROFILE_URL_RE.search(url)
-        if not m or m.group(1) in _RESERVED_PATHS:
-            return None
-        return m.group(1)
+        return m is not None and m.group(1) not in _RESERVED_PATHS
 
     @staticmethod
     def _profile_url(user: str, mode: str) -> str:

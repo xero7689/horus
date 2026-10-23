@@ -183,8 +183,7 @@ class HorusStorage:
         query = "SELECT MAX(timestamp) AS ts FROM items WHERE site_id = ?"
         params: list[str] = [site_id]
         if author_name:
-            # Handles are case-insensitive on X (`@nasa` vs stored "NASA").
-            query += " AND author_name = ? COLLATE NOCASE"
+            query += " AND author_name = ?"
             params.append(author_name)
         row = self._conn.execute(query, params).fetchone()
         if row and row["ts"]:
@@ -245,6 +244,21 @@ class HorusStorage:
             (site_id, url, items_found, items_new, started_at.isoformat()),
         )
         self._conn.commit()
+
+    def get_last_crawl_start(self, site_id: str, url: str) -> datetime | None:
+        """Start time of the latest crawl of `url` that found at least one item.
+
+        Runs that found nothing (blocked, logged out) are ignored so they cannot
+        move an incremental cutoff past posts that were never fetched.
+        """
+        row = self._conn.execute(
+            "SELECT MAX(started_at) AS ts FROM crawl_log"
+            " WHERE site_id = ? AND url = ? AND items_found > 0",
+            (site_id, url),
+        ).fetchone()
+        if row and row["ts"]:
+            return datetime.fromisoformat(row["ts"])
+        return None
 
     def get_stats(self, site_id: str | None = None) -> dict[str, Any]:
         """Return stats: total items, per-site counts, latest timestamps."""

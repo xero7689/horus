@@ -67,14 +67,14 @@ class SiteAdapter(ABC):
         """
         return False
 
-    def profile_author(self, url: str) -> str | None:
-        """Account name whose profile ``url`` lists, or None if it is not a profile.
+    def is_profile_url(self, url: str) -> bool:
+        """True if `url` is one account's feed (posts or replies tab).
 
-        Scopes the automatic incremental cutoff to that account; matched
-        case-insensitively against stored ``author_name``. Single posts, threads
-        and search pages return None and are crawled without an automatic cutoff.
+        Only profile URLs get an automatic incremental cutoff (the start of their
+        last crawl). Single posts, threads and search pages return False and are
+        crawled without one.
         """
-        return None
+        return False
 
     def extract_inline_items(self, html: str) -> dict[str, Any]:
         """Extract a parse_response-compatible body from a page's inlined JSON.

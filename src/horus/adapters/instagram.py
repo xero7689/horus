@@ -215,11 +215,9 @@ class InstagramAdapter(SiteAdapter):
     def is_post_url(self, url: str) -> bool:
         return _POST_URL_RE.search(url) is not None
 
-    def profile_author(self, url: str) -> str | None:
+    def is_profile_url(self, url: str) -> bool:
         m = _PROFILE_URL_RE.search(url)
-        if not m or m.group(1) in _RESERVED_PATHS:
-            return None
-        return m.group(1)
+        return m is not None and m.group(1) not in _RESERVED_PATHS
 
     def extract_inline_items(self, html: str) -> dict[str, Any]:
         """Pull the inlined shortcode web_info blob from a directly-navigated post page.

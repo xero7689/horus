@@ -206,16 +206,17 @@ class CrawlOrchestrator:
         )
 
     def _incremental_since(self, adapter: SiteAdapter, site: str, url: str) -> datetime | None:
-        """Newest stored post of the account whose profile `url` lists.
+        """Start of the last crawl of this profile URL that found items, else None.
 
-        Scoped per account: a site-wide cutoff would skip a newly crawled
-        account's posts that are older than another account's newest post.
-        Non-profile URLs (threads, statuses) get no cutoff.
+        Keyed by the crawled URL, not by author: retweets and reply-thread roots
+        are stored under other authors' names while crawling someone else, so an
+        author-based cutoff would skip a first crawl of those accounts. Posts and
+        replies tabs are separate URLs and keep separate cutoffs. Non-profile URLs
+        (threads, statuses) get no cutoff.
         """
-        author = adapter.profile_author(url)
-        if author is None:
+        if not adapter.is_profile_url(url):
             return None
-        return self._storage.get_latest_timestamp(site, author_name=author)
+        return self._storage.get_last_crawl_start(site, url)
 
     async def _run_intercept(
         self,
@@ -265,6 +266,7 @@ class CrawlOrchestrator:
         crawled_via_post_url = False
         for url in urls:
             self._reporter.log(f"Crawling [cyan]{url}[/cyan]...")
+            found_before, new_before = outcome.total_found, outcome.total_new
             if adapter.is_post_url(url):
                 # Single post: IG inlines the post as JSON in the page (direct
                 # navigation fires no interceptable XHR), so pull it from SSR.
@@ -291,7 +293,15 @@ class CrawlOrchestrator:
                     on_batch=on_batch,
                     limit=limit,
                 )
-            self._storage.log_crawl(site, url, outcome.total_found, outcome.total_new, started_at)
+            # Per-URL counts: the next incremental cutoff for this URL depends on
+            # whether this URL itself found anything.
+            self._storage.log_crawl(
+                site,
+                url,
+                outcome.total_found - found_before,
+                outcome.total_new - new_before,
+                started_at,
+            )
 
         if with_comments and crawled_top_level:
             self._reporter.log(f"Fetching comments for {len(crawled_top_level)} posts...")
