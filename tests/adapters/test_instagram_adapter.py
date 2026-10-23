@@ -112,8 +112,12 @@ def test_get_urls_user_and_url() -> None:
     ]
 
 
-def test_crawl_options_expose_user_and_url() -> None:
-    assert {o["name"] for o in InstagramAdapter().get_crawl_options()} == {"--user", "--url"}
+def test_crawl_options_expose_user_url_and_comments() -> None:
+    assert {o["name"] for o in InstagramAdapter().get_crawl_options()} == {
+        "--user",
+        "--url",
+        "--with-comments",
+    }
 
 
 def test_registered() -> None:
@@ -141,6 +145,15 @@ def test_is_post_url() -> None:
     assert a.is_post_url("https://www.instagram.com/reel/ABC123/")
     assert not a.is_post_url("https://www.instagram.com/nasa/")
     assert not a.is_post_url("https://www.instagram.com/")
+
+
+def test_is_profile_url() -> None:
+    a = InstagramAdapter()
+    assert a.is_profile_url("https://www.instagram.com/nasa/")
+    assert a.is_profile_url("https://www.instagram.com/nasa")
+    assert not a.is_profile_url("https://www.instagram.com/p/DZtid4YJ4pX/")
+    assert not a.is_profile_url("https://www.instagram.com/reel/ABC123/")
+    assert not a.is_profile_url("https://www.instagram.com/")
 
 
 def test_post_code_from_url() -> None:

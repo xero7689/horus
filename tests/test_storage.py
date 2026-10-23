@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from horus.core.storage import HorusStorage
 from horus.models import ScrapedItem, ScrapedPage
 
@@ -129,6 +131,23 @@ class TestGetLatestTimestamp:
         assert ts.month == 1
 
 
+class TestLastProfileCrawl:
+    def test_latest_crawl_that_found_items(self, storage: HorusStorage) -> None:
+        url = "https://www.threads.net/@alice"
+        storage.log_crawl("threads", url, 3, 3, datetime(2024, 1, 1, tzinfo=UTC))
+        storage.log_crawl("threads", url, 2, 0, datetime(2024, 2, 1, tzinfo=UTC))
+        # A run that found nothing (blocked, logged out) must not move the cutoff.
+        storage.log_crawl("threads", url, 0, 0, datetime(2024, 3, 1, tzinfo=UTC))
+        assert storage.get_last_crawl_start("threads", url) == datetime(2024, 2, 1, tzinfo=UTC)
+
+    def test_none_for_other_url_or_site(self, storage: HorusStorage) -> None:
+        storage.log_crawl(
+            "threads", "https://www.threads.net/@alice", 1, 1, datetime(2024, 1, 1, tzinfo=UTC)
+        )
+        assert storage.get_last_crawl_start("threads", "https://www.threads.net/@bob") is None
+        assert storage.get_last_crawl_start("twitter", "https://www.threads.net/@alice") is None
+
+
 class TestSearch:
     def test_fts_basic(self, storage: HorusStorage) -> None:
         storage.upsert_items(
@@ -177,6 +196,37 @@ class TestSearch:
         storage.upsert_items([_item("1", text="hello")])
         results = storage.search("zzznomatch")
         assert results == []
+
+    @pytest.mark.parametrize(
+        "query",
+        ["example.com", "what's", "C++", "fastapi-tutorial", "AND"],
+    )
+    def test_punctuation_and_operators_are_literal(self, storage: HorusStorage, query: str) -> None:
+        storage.upsert_items(
+            [
+                _item("1", text=f"note about {query} here"),
+                _item("2", text="something unrelated"),
+            ]
+        )
+        results = storage.search(query)
+        assert [r.id for r in results] == ["1"]
+
+    def test_terms_are_anded_not_adjacent(self, storage: HorusStorage) -> None:
+        storage.upsert_items(
+            [
+                _item("1", text="hello big world"),
+                _item("2", text="hello there"),
+            ]
+        )
+        assert [r.id for r in storage.search("hello world")] == ["1"]
+
+    def test_whitespace_only_query_returns_empty(self, storage: HorusStorage) -> None:
+        storage.upsert_items([_item("1", text="hello world")])
+        assert storage.search("     ") == []
+
+    def test_double_quote_in_query(self, storage: HorusStorage) -> None:
+        storage.upsert_items([_item("1", text='he said "hello" loudly')])
+        assert [r.id for r in storage.search('"hello"')] == ["1"]
 
 
 class TestLogCrawl:

@@ -67,6 +67,15 @@ class SiteAdapter(ABC):
         """
         return False
 
+    def is_profile_url(self, url: str) -> bool:
+        """True if `url` is one account's feed (posts or replies tab).
+
+        Only profile URLs get an automatic incremental cutoff (the start of their
+        last crawl). Single posts, threads and search pages return False and are
+        crawled without one.
+        """
+        return False
+
     def extract_inline_items(self, html: str) -> dict[str, Any]:
         """Extract a parse_response-compatible body from a page's inlined JSON.
 

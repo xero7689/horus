@@ -350,6 +350,13 @@ class TestPostUrlSsr:
         assert not self.adapter.is_post_url("https://www.threads.net/@alice")
         assert not self.adapter.is_post_url("https://www.threads.net/@alice/replies")
 
+    def test_is_profile_url(self) -> None:
+        a = self.adapter
+        assert a.is_profile_url("https://www.threads.net/@alice")
+        assert a.is_profile_url("https://www.threads.com/@alice/replies")
+        assert not a.is_profile_url("https://www.threads.net/@alice/post/DZ79_o3mjX6")
+        assert not a.is_profile_url("https://www.threads.net/")
+
     def test_extract_inline_items_takes_first_array_only(self) -> None:
         # First array = the post's containing thread; later arrays are comment
         # groups and must NOT leak into the synthesized posts payload.

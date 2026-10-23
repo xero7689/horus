@@ -12,6 +12,7 @@ Schema notes (see docs/superpowers/plans/2026-05-31-twitter-adapter.md):
 - the pinned tweet arrives in a separate TimelinePinEntry instruction
 """
 
+import re
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -23,6 +24,9 @@ from horus.models import ScrapedItem
 _X_TIME_FORMAT = "%a %b %d %H:%M:%S %z %Y"
 _TWEET_OPS = ("UserTweets", "UserTweetsAndReplies", "TweetDetail")
 _VIDEO_TYPES = ("video", "animated_gif")
+_PROFILE_URL_RE = re.compile(r"(?:x|twitter)\.com/([A-Za-z0-9_]+)(?:/with_replies)?/?(?:[?#]|$)")
+# Top-level paths that are site sections, not screen names.
+_RESERVED_PATHS = frozenset({"home", "explore", "search", "i", "login", "notifications"})
 
 
 def _parse_x_time(value: str | None) -> datetime | None:
@@ -295,6 +299,10 @@ class TwitterAdapter(SiteAdapter):
             return [self._profile_url(u, mode) for u in usernames]
         raise ValueError("twitter adapter requires --user or --url")
 
+    def is_profile_url(self, url: str) -> bool:
+        m = _PROFILE_URL_RE.search(url)
+        return m is not None and m.group(1) not in _RESERVED_PATHS
+
     @staticmethod
     def _profile_url(user: str, mode: str) -> str:
         username = user.lstrip("@")
@@ -307,6 +315,12 @@ class TwitterAdapter(SiteAdapter):
             {
                 "name": "--user",
                 "help": "X username (e.g. @NASA)",
+                "required": False,
+                "default": None,
+            },
+            {
+                "name": "--url",
+                "help": "Single status URL (https://x.com/<user>/status/<id>)",
                 "required": False,
                 "default": None,
             },

@@ -14,16 +14,24 @@
 
 ```
 src/horus/
-├── cli.py              # Click CLI（login, crawl, list-sites, show, search, pages, export, stats）；crawl 是 CrawlOrchestrator 的 thin shell
+├── cli.py              # Click CLI（login, crawl, list-sites, show, search, pages, export, stats, serve, mcp）；crawl 是 CrawlOrchestrator 的 thin shell
 ├── config.py           # Settings（HORUS_* env vars，~/.horus/ 路徑管理）
 ├── models.py           # ScrapedItem, ScrapedPage, CrawlResult, SiteAdapterConfig
 ├── serp_eval.py        # 純函式 SERP 比對指標（normalize_url, overlap_at_k, rbo）
 ├── core/
 │   ├── browser.py      # BaseBrowser（Playwright 生命週期，save_login_state）
 │   ├── scraper.py      # BaseScraper（scrape：scroll + response intercept；scrape_page：HTML → Markdown）
-│   ├── orchestrator.py # CrawlOrchestrator（http/page/intercept 三向 dispatch + 儲存副作用；cli/serve 共用）
-│   ├── dates.py        # parse_since（cli/serve 共用，raises ValueError）
+│   ├── orchestrator.py # CrawlOrchestrator（http/page/intercept 三向 dispatch + 儲存副作用；cli/serve/mcp 共用）
+│   ├── crawl_plan.py   # resolve_crawl_plan（adapter → urls → 登入狀態；cli/serve/mcp 使用）
+│   ├── jobs.py         # JobManager（背景爬取工作；serve 的 CrawlerManager 包在外層只做 SSE；serve/mcp 使用）
+│   ├── dates.py        # parse_since（cli/serve/mcp 共用，raises ValueError）
 │   └── storage.py      # HorusStorage（SQLite + FTS5；items + pages 兩張表）
+├── mcp/                # `horus mcp`：stdio MCP server（官方 SDK v2 MCPServer）
+│   ├── server.py       # build_server / run_stdio（disable_stdin → 跑 stdio → finally 取消背景工作）
+│   ├── state.py        # McpState（共用 storage + JobManager + 同站一次一個）、job_payload
+│   ├── tools_query.py  # list_sites, search, show, get_item, pages, get_page, stats
+│   ├── tools_crawl.py  # crawl（等 wait_seconds 後轉背景）, crawl_status, crawl_cancel
+│   └── formatting.py   # model → JSON dict（文字預覽截斷、crawl 參數改名）
 └── adapters/
     ├── base.py         # SiteAdapter ABC（mode flags + page-mode hooks + fetch_comments() hook；get_urls 唯一 abstract）
     ├── __init__.py     # Registry（register, get_adapter, list_adapters）
@@ -45,6 +53,7 @@ tests/
     ├── test_web_adapter.py
     ├── test_instagram_adapter.py  # parser/filter/get_urls（用消毒 fixtures）
     └── test_instagram_cli.py      # cli 攔截留言分支 + url 回填
+└── mcp_server/         # MCP 工具測試（in-memory Client）+ stdio 煙霧測試；不叫 mcp/ 以免遮住 SDK
 ```
 
 ## 常用指令
@@ -73,6 +82,7 @@ horus export --site threads --format json -o out.json
 horus export --site threads --format csv -o out.csv
 horus export --site web --format markdown --output ./export/  # 從 DB 匯出 .md 檔
 horus stats                                      # 統計資訊
+horus mcp                                        # stdio MCP server，給 agent 用
 ```
 
 ## 開發規範
@@ -99,14 +109,29 @@ horus stats                                      # 統計資訊
 ## 關鍵設計
 
 - **CrawlOrchestrator**：`core/orchestrator.py` 是 crawl 編排的單一實作（http / page / intercept
-  三向 dispatch、儲存副作用、留言抓取）；cli 與 serve 都是 thin shell，只差 `CrawlReporter` 實作
-  （Rich console + stdout JSONL vs SSE broadcast + job log）
+  三向 dispatch、儲存副作用、留言抓取）；cli、serve、mcp 都是 thin shell，只差 `CrawlReporter` 實作
+  （Rich console + stdout JSONL vs SSE broadcast + job log；mcp 走 JobManager 的 job log）
+- **`--limit` 是每個目標的上限**：每個 profile / 貼文 URL 各自最多約 N 筆；`0` = 不限。http 模式傳給
+  `fetch_items`；攔截模式捲動到該目標收集滿 N 筆（去重、比 since 新）就停；page 模式
+  （web/facebook）不受影響，一個 URL 一頁。是停止門檻不是精確上限，最後一批整批保留。
+  預設 50，所以捲動爬取每個 profile 約 50 筆就停，要抓完整 profile 請給 `--limit 0`。
+  serve 網頁表單只收 1–1000，`POST /crawl` API 才接受 0（不限）；MCP `crawl` 工具預設 10，接受 0
+- **MCP server（`horus mcp`）**：只提供 tools（無 resources/prompts）；`crawl` 等到 `wait_seconds`
+  （預設 45、上限 600）還沒完成就回 `job_id` 轉背景，agent 用 `crawl_status` 輪詢；同一站一次只跑
+  一個（MCP 專屬政策，serve 不套用）；不做登入，缺登入狀態時要使用者在終端跑 `horus login <site>`。
+  stdio 紀律：stdin 由 `disable_stdin()` 關閉（adapter 不會把協定訊息當 URL 清單讀）；MCP 路徑上
+  沒有任何輸出寫到 stdout，stdout 只放協定訊息（只有 login 會 print 到 stdout，MCP 不開放 login）。
+  背景工作跟著 server 程序，agent 關掉就中斷
 - **ScrapedItem.extra**：site-specific 欄位存 JSON dict，避免多表 migration
 - **response_filter 簽名**：`(url: str, body: dict) -> bool`，雙重過濾（URL pattern + body 結構）
 - **State 儲存**：`~/.horus/states/<site_id>.json`，per-site Playwright storage_state
 - **FTS5 trigram**：支援中文搜尋，短查詢（<3字）自動 fallback LIKE
 - **WAL mode**：SQLite write-ahead logging
-- **增量爬取**：`crawl` 指令預設從上次最新 timestamp 開始（`get_latest_timestamp`）
+- **增量爬取**：沒給 `--since` 時，profile 網址只抓「上次爬這個網址（且有抓到資料）的開始時間」之後的貼文
+  （`SiteAdapter.is_profile_url(url)` → `crawl_log` 的 `get_last_crawl_start(site, url)`）。以網址為準、不看作者：
+  轉推與回覆串原文會記在別人名下，看作者會擋掉那些帳號的第一次爬取。posts／replies 分頁各自計算；
+  從沒爬過的網址不設起點。`crawl_log` 每個網址記自己的筆數。單貼、討論串等非 profile 網址不自動設起點。有給 `--since` 時捲動抓取的網址都用它
+  （threads / instagram 的單貼網址走 SSR-JSON，不套用 since）
 - **has_page_mode**：`SiteAdapter.has_page_mode = True` 時 CLI 走 `scrape_page()` 路徑（HTML → Markdown），存入 `pages` 表；`False` 走 response 攔截路徑存入 `items` 表
 - **markdownify**：HTML → Markdown 轉換，保留結構、去除 script/style/nav/footer
 

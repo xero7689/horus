@@ -6,6 +6,9 @@ from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
+
+from horus.adapters import get_adapter
 from horus.adapters.base import SiteAdapter
 from horus.models import ScrapedItem
 
@@ -69,3 +72,20 @@ def test_default_fetch_comments_without_parser_yields_empty() -> None:
         return [pair async for pair in a.fetch_comments(scraper, [], None)]
 
     assert asyncio.run(collect()) == []
+
+
+_EXPECTED_OPTIONS = {
+    "threads": {"--user", "--url", "--mode", "--with-comments"},
+    "twitter": {"--user", "--url", "--mode"},
+    "instagram": {"--user", "--url", "--with-comments"},
+    "web": {"--url", "--url-list"},
+    "facebook": {"--url"},
+    "serper": {"--query", "--gl", "--hl"},
+    "ddg": {"--query"},
+}
+
+
+@pytest.mark.parametrize("site", sorted(_EXPECTED_OPTIONS))
+def test_crawl_options_match_what_get_urls_and_orchestrator_accept(site: str) -> None:
+    names = {opt["name"] for opt in get_adapter(site)().get_crawl_options()}
+    assert names == _EXPECTED_OPTIONS[site]

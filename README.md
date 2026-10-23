@@ -11,7 +11,7 @@ Built for sites that are hard to access via traditional APIs — handles login f
 - **Two crawl modes**:
   - *Response interception* — captures API/GraphQL responses (e.g. Threads)
   - *Page mode* — fetches full rendered HTML → converts to Markdown (any public site)
-- **Incremental crawls** — automatically resumes from last fetched timestamp
+- **Incremental crawls** — each profile URL resumes from where its last crawl started
 - **Graceful Ctrl+C** — saves in-progress data before exiting
 - **SQLite + FTS5** — full-text search with CJK (Chinese/Japanese/Korean) support
 - **Export** — JSON, CSV, or Markdown
@@ -49,6 +49,14 @@ horus export --site threads --format json -o out.json
 horus export --site threads --format csv -o out.csv
 ```
 
+`--limit` applies per target (each profile or post URL), `0` = unlimited. It is a stop
+threshold: scrolling stops once about N items are collected and the last batch is kept
+whole. The default is 50, so scrolling crawls (Instagram, Threads, Twitter) stop around
+50 items per profile instead of scrolling until `HORUS_MAX_PAGES`; pass `--limit 0` for a
+full profile. Page mode (web, facebook) is not limited by it, and http mode (serper) passes
+it to the API. The `serve` web form accepts 1-1000; the `POST /crawl` API also accepts 0
+(unlimited).
+
 ### Generic Web Pages (no login required)
 
 ```bash
@@ -74,7 +82,93 @@ horus export --site web --format markdown --output ./export/
 horus list-sites          # List all available adapters
 horus show --site threads # Display stored items
 horus stats               # Crawl statistics
+horus mcp                 # stdio MCP server for agents (see below)
 ```
+
+## MCP server
+
+`horus mcp` runs a stdio [MCP](https://modelcontextprotocol.io) server so coding agents
+(Claude Code, Codex, Gemini CLI, OpenCode) can query and crawl Horus directly.
+
+| Tool | Purpose |
+|------|---------|
+| `list_sites` | Crawlable sites, whether each needs login / has a saved login state, accepted params |
+| `search` | Full-text search over stored posts (CJK supported; text previewed) |
+| `show` | List stored posts, newest first, by site / author / since |
+| `get_item` | Full text of one post; `include_thread` adds the whole conversation |
+| `pages` | List stored web pages |
+| `get_page` | Markdown of one stored page (cut at `max_chars`) |
+| `stats` | Item counts and latest timestamps |
+| `crawl` | Crawl a site into the DB; waits up to `wait_seconds` (default 45), then continues in the background |
+| `crawl_status` | Status, counts, refs, log tail and error of a crawl job |
+| `crawl_cancel` | Cancel a running crawl (stored items are kept) |
+
+`crawl` takes one of `user` / `url` / `query` plus `limit` (default 10), which caps items
+per profile or post (`0` = unlimited). Only one crawl per site runs at a time.
+
+Prerequisites:
+
+- `horus` on your `PATH`: `uv tool install --editable .`
+- Sites that need login: run `horus login <site>` in a terminal first. The MCP server never
+  opens a login browser.
+
+### Client setup
+
+Claude Code:
+
+```bash
+claude mcp add --scope user horus -- horus mcp
+```
+
+Codex (`~/.codex/config.toml`, or `codex mcp add horus -- horus mcp`):
+
+```toml
+[mcp_servers.horus]
+command = "horus"
+args = ["mcp"]
+# tool_timeout_sec = 60  # default; crawl only waits 45s by default
+```
+
+Codex's default tool timeout is 60 seconds and `crawl` returns after 45 seconds by default,
+so nothing needs changing. To let `crawl` wait longer, raise both `tool_timeout_sec` and the
+`wait_seconds` argument.
+
+Gemini CLI (`~/.gemini/settings.json` for user scope, `.gemini/settings.json` for project
+scope; or `gemini mcp add --scope user horus horus mcp`):
+
+```json
+{
+  "mcpServers": {
+    "horus": {
+      "command": "horus",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+OpenCode (`opencode.json`):
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "horus": {
+      "type": "local",
+      "command": ["horus", "mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Grok: not tested. Any MCP client that supports stdio servers can use `horus mcp` as the
+command.
+
+Known limitations:
+
+- Background crawls live inside the server process; they stop when the agent closes it.
+- Each agent starts its own server, so job ids are not shared between agents.
 
 ## Adding a New Site Adapter
 
@@ -142,6 +236,7 @@ src/horus/
 ├── cli.py          # CLI entry point (Click)
 ├── config.py       # Settings (pydantic-settings)
 ├── models.py       # ScrapedItem, ScrapedPage, CrawlResult
+├── mcp/            # stdio MCP server (server, state, tools_query, tools_crawl, formatting)
 ├── core/
 │   ├── browser.py  # Playwright lifecycle + login state
 │   ├── scraper.py  # Scroll + response intercept / page fetch

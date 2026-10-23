@@ -69,6 +69,7 @@ def _parse_item(
 
 
 _POST_URL_RE = re.compile(r"threads\.(?:net|com)/@[^/]+/post/[^/?#]+")
+_PROFILE_URL_RE = re.compile(r"threads\.(?:net|com)/@[^/?#]+(?:/replies)?/?(?:[?#]|$)")
 
 
 def _extract_thread_items_arrays(html: str) -> list[list[dict[str, Any]]]:
@@ -169,6 +170,9 @@ class ThreadsAdapter(SiteAdapter):
 
     def is_post_url(self, url: str) -> bool:
         return _POST_URL_RE.search(url) is not None
+
+    def is_profile_url(self, url: str) -> bool:
+        return _PROFILE_URL_RE.search(url) is not None
 
     def extract_inline_items(self, html: str) -> dict[str, Any]:
         """Pull the inlined thread from a directly-navigated post page.
@@ -288,9 +292,21 @@ class ThreadsAdapter(SiteAdapter):
                 "default": None,
             },
             {
+                "name": "--url",
+                "help": "Single post URL (https://www.threads.com/@user/post/<code>)",
+                "required": False,
+                "default": None,
+            },
+            {
                 "name": "--mode",
                 "help": "posts or replies",
                 "required": False,
                 "default": "posts",
+            },
+            {
+                "name": "--with-comments",
+                "help": "Also fetch replies from each crawled post's page",
+                "required": False,
+                "default": None,
             },
         ]
