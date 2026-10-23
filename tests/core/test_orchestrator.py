@@ -61,6 +61,7 @@ class _FakeScraper:
     def __init__(self, per_url: dict[str, list[ScrapedItem]]) -> None:
         self.per_url = per_url
         self.scrape_calls: list[tuple[str, int]] = []
+        self.since_by_url: dict[str, datetime | None] = {}
         self.page_calls: list[str] = []
 
     async def __aenter__(self) -> "_FakeScraper":
@@ -69,8 +70,17 @@ class _FakeScraper:
     async def __aexit__(self, *exc: object) -> None:
         return None
 
-    async def scrape(self, url: str, *_a: Any, limit: int = 0, on_batch: Any = None, **_k: Any):
+    async def scrape(
+        self,
+        url: str,
+        *_a: Any,
+        limit: int = 0,
+        since: datetime | None = None,
+        on_batch: Any = None,
+        **_k: Any,
+    ):
         self.scrape_calls.append((url, limit))
+        self.since_by_url[url] = since
         items = self.per_url.get(url, [])
         if on_batch and items:
             on_batch(items)
@@ -103,6 +113,13 @@ class _InterceptStub(SiteAdapter):
 
     def get_urls(self, **kwargs: Any) -> list[str]:
         return []
+
+
+class _ProfileStub(_InterceptStub):
+    """Treats "prof:<name>" URLs as <name>'s profile; anything else is not a profile."""
+
+    def profile_author(self, url: str) -> str | None:
+        return url.removeprefix("prof:") if url.startswith("prof:") else None
 
 
 class _PageStub(SiteAdapter):
@@ -192,3 +209,59 @@ def test_page_mode_limit_zero_fetches_all(make_orch: Any) -> None:
         )
     )
     assert scraper.page_calls == ["p1", "p2", "p3"]
+
+
+def _seed(path: Any, *authored: tuple[str, str, datetime]) -> None:
+    storage = HorusStorage(path)
+    storage.upsert_items(
+        [
+            ScrapedItem(
+                id=i,
+                site_id="intercept_stub",
+                url=f"https://e.com/{i}",
+                author_name=a,
+                timestamp=ts,
+            )
+            for i, a, ts in authored
+        ]
+    )
+    storage.close()
+
+
+def test_intercept_incremental_since_is_per_profile_author(make_orch: Any, tmp_path: Any) -> None:
+    alice_ts = datetime(2024, 6, 1, tzinfo=UTC)
+    bob_ts = datetime(2024, 1, 1, tzinfo=UTC)
+    _seed(tmp_path / "t.db", ("A1", "alice", alice_ts), ("B1", "bob", bob_ts))
+    scraper = _FakeScraper({})
+    asyncio.run(
+        make_orch(scraper).run(
+            _ProfileStub(),
+            ["prof:bob", "prof:carol", "thread:x"],
+            site="intercept_stub",
+            kwargs={},
+            limit=5,
+            since=None,
+            state_path=None,
+        )
+    )
+    # bob resumes from his own newest post, not alice's newer one; carol has
+    # nothing stored; a non-profile URL (thread/status) gets no cutoff at all.
+    assert scraper.since_by_url == {"prof:bob": bob_ts, "prof:carol": None, "thread:x": None}
+
+
+def test_intercept_explicit_since_applies_to_every_url(make_orch: Any, tmp_path: Any) -> None:
+    _seed(tmp_path / "t.db", ("B1", "bob", datetime(2024, 1, 1, tzinfo=UTC)))
+    explicit = datetime(2020, 1, 1, tzinfo=UTC)
+    scraper = _FakeScraper({})
+    asyncio.run(
+        make_orch(scraper).run(
+            _ProfileStub(),
+            ["prof:bob", "thread:x"],
+            site="intercept_stub",
+            kwargs={},
+            limit=5,
+            since=explicit,
+            state_path=None,
+        )
+    )
+    assert scraper.since_by_url == {"prof:bob": explicit, "thread:x": explicit}

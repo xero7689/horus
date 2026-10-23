@@ -205,6 +205,18 @@ class CrawlOrchestrator:
             started_at,
         )
 
+    def _incremental_since(self, adapter: SiteAdapter, site: str, url: str) -> datetime | None:
+        """Newest stored post of the account whose profile `url` lists.
+
+        Scoped per account: a site-wide cutoff would skip a newly crawled
+        account's posts that are older than another account's newest post.
+        Non-profile URLs (threads, statuses) get no cutoff.
+        """
+        author = adapter.profile_author(url)
+        if author is None:
+            return None
+        return self._storage.get_latest_timestamp(site, author_name=author)
+
     async def _run_intercept(
         self,
         adapter: SiteAdapter,
@@ -220,9 +232,6 @@ class CrawlOrchestrator:
         started_at: datetime,
     ) -> None:
         # Response-intercept path (Threads etc.)
-        if since is None:
-            since = self._storage.get_latest_timestamp(site)
-
         with_comments = kwargs.get("with_comments") == "true"
         # Populated in on_batch when with_comments is True
         crawled_top_level: list[ScrapedItem] = []
@@ -269,12 +278,15 @@ class CrawlOrchestrator:
                 else:
                     self._reporter.log(f"  [yellow]No post data found at {url}[/yellow]")
             else:
+                url_since = (
+                    since if since is not None else self._incremental_since(adapter, site, url)
+                )
                 await scraper.scrape(
                     url,
                     adapter.get_response_filter(),
                     adapter.parse_response,
                     state_path,
-                    since=since,
+                    since=url_since,
                     on_progress=on_progress,
                     on_batch=on_batch,
                     limit=limit,

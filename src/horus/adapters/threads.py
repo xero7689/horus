@@ -69,6 +69,7 @@ def _parse_item(
 
 
 _POST_URL_RE = re.compile(r"threads\.(?:net|com)/@[^/]+/post/[^/?#]+")
+_PROFILE_URL_RE = re.compile(r"threads\.(?:net|com)/@([^/?#]+)(?:/replies)?/?(?:[?#]|$)")
 
 
 def _extract_thread_items_arrays(html: str) -> list[list[dict[str, Any]]]:
@@ -169,6 +170,10 @@ class ThreadsAdapter(SiteAdapter):
 
     def is_post_url(self, url: str) -> bool:
         return _POST_URL_RE.search(url) is not None
+
+    def profile_author(self, url: str) -> str | None:
+        m = _PROFILE_URL_RE.search(url)
+        return m.group(1) if m else None
 
     def extract_inline_items(self, html: str) -> dict[str, Any]:
         """Pull the inlined thread from a directly-navigated post page.

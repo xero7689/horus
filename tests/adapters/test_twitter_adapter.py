@@ -167,3 +167,11 @@ def test_created_at_parsing() -> None:
 
 def test_empty_body_returns_empty() -> None:
     assert TwitterAdapter().parse_response({}) == []
+
+
+def test_profile_author() -> None:
+    a = TwitterAdapter()
+    assert a.profile_author("https://x.com/NASA") == "NASA"
+    assert a.profile_author("https://x.com/NASA/with_replies") == "NASA"
+    assert a.profile_author("https://x.com/NASA/status/123") is None
+    assert a.profile_author("https://x.com/") is None

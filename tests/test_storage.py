@@ -130,6 +130,13 @@ class TestGetLatestTimestamp:
         assert ts is not None
         assert ts.month == 1
 
+    def test_author_match_ignores_case(self, storage: HorusStorage) -> None:
+        # X screen names are case-insensitive: `--user @nasa` must find "NASA".
+        storage.upsert_items([_item("1", author_name="NASA", ts="2024-03-01T00:00:00+00:00")])
+        ts = storage.get_latest_timestamp("threads", author_name="nasa")
+        assert ts is not None
+        assert ts.month == 3
+
 
 class TestSearch:
     def test_fts_basic(self, storage: HorusStorage) -> None:

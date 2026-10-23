@@ -24,6 +24,9 @@ if TYPE_CHECKING:
 _TIMELINE_KEY = "xdt_api__v1__feed__user_timeline_graphql_connection"
 _WEB_INFO_KEY = "xdt_api__v1__media__shortcode__web_info"
 _POST_URL_RE = re.compile(r"/(?:p|reel)/([^/?#]+)")
+_PROFILE_URL_RE = re.compile(r"instagram\.com/([A-Za-z0-9._]+)/?(?:[?#]|$)")
+# Top-level paths that are site sections, not usernames.
+_RESERVED_PATHS = frozenset({"p", "reel", "reels", "explore", "accounts", "stories", "direct"})
 _JSON_SCRIPT_RE = re.compile(r'<script[^>]*type="application/json"[^>]*>(.*?)</script>', re.DOTALL)
 
 
@@ -211,6 +214,12 @@ class InstagramAdapter(SiteAdapter):
 
     def is_post_url(self, url: str) -> bool:
         return _POST_URL_RE.search(url) is not None
+
+    def profile_author(self, url: str) -> str | None:
+        m = _PROFILE_URL_RE.search(url)
+        if not m or m.group(1) in _RESERVED_PATHS:
+            return None
+        return m.group(1)
 
     def extract_inline_items(self, html: str) -> dict[str, Any]:
         """Pull the inlined shortcode web_info blob from a directly-navigated post page.

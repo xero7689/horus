@@ -147,6 +147,15 @@ def test_is_post_url() -> None:
     assert not a.is_post_url("https://www.instagram.com/")
 
 
+def test_profile_author() -> None:
+    a = InstagramAdapter()
+    assert a.profile_author("https://www.instagram.com/nasa/") == "nasa"
+    assert a.profile_author("https://www.instagram.com/nasa") == "nasa"
+    assert a.profile_author("https://www.instagram.com/p/DZtid4YJ4pX/") is None
+    assert a.profile_author("https://www.instagram.com/reel/ABC123/") is None
+    assert a.profile_author("https://www.instagram.com/") is None
+
+
 def test_post_code_from_url() -> None:
     assert post_code_from_url("https://www.instagram.com/p/DZtid4YJ4pX/") == "DZtid4YJ4pX"
     assert post_code_from_url("https://www.instagram.com/reel/ABC123/?x=1") == "ABC123"

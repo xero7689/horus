@@ -79,11 +79,11 @@ def register(server: MCPServer, state: McpState) -> None:
         limit is the number of results requested (10-100); limit > 10 costs 2
         credits per query instead of 1.
 
-        since (YYYY-MM-DD) applies to scrolling feeds only. If omitted, the crawl
-        is incremental per SITE, not per account: only posts newer than the
-        newest stored post of that site are fetched. For the first crawl of a
-        new account on a site that already has data, pass an early since (e.g.
-        "2000-01-01") or older posts are silently skipped.
+        since (YYYY-MM-DD) applies to every scrolled URL (profiles, X statuses);
+        threads / instagram single-post URLs ignore it. If omitted, each profile
+        crawl is incremental per account: only posts newer than that account's
+        newest stored post are fetched (a first crawl of an account starts from
+        its latest posts), and single-post / status URLs get no cutoff.
 
         Login is never done here: if a site needs it, run `horus login <site>`
         in a terminal.

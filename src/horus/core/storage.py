@@ -183,7 +183,8 @@ class HorusStorage:
         query = "SELECT MAX(timestamp) AS ts FROM items WHERE site_id = ?"
         params: list[str] = [site_id]
         if author_name:
-            query += " AND author_name = ?"
+            # Handles are case-insensitive on X (`@nasa` vs stored "NASA").
+            query += " AND author_name = ? COLLATE NOCASE"
             params.append(author_name)
         row = self._conn.execute(query, params).fetchone()
         if row and row["ts"]:
