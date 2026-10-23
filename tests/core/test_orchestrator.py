@@ -61,6 +61,7 @@ class _FakeScraper:
     def __init__(self, per_url: dict[str, list[ScrapedItem]]) -> None:
         self.per_url = per_url
         self.scrape_calls: list[tuple[str, int]] = []
+        self.since_by_url: dict[str, datetime | None] = {}
         self.page_calls: list[str] = []
 
     async def __aenter__(self) -> "_FakeScraper":
@@ -69,8 +70,17 @@ class _FakeScraper:
     async def __aexit__(self, *exc: object) -> None:
         return None
 
-    async def scrape(self, url: str, *_a: Any, limit: int = 0, on_batch: Any = None, **_k: Any):
+    async def scrape(
+        self,
+        url: str,
+        *_a: Any,
+        limit: int = 0,
+        since: datetime | None = None,
+        on_batch: Any = None,
+        **_k: Any,
+    ):
         self.scrape_calls.append((url, limit))
+        self.since_by_url[url] = since
         items = self.per_url.get(url, [])
         if on_batch and items:
             on_batch(items)
@@ -103,6 +113,13 @@ class _InterceptStub(SiteAdapter):
 
     def get_urls(self, **kwargs: Any) -> list[str]:
         return []
+
+
+class _ProfileStub(_InterceptStub):
+    """Treats "prof:<name>" URLs as profile feeds; anything else is not a profile."""
+
+    def is_profile_url(self, url: str) -> bool:
+        return url.startswith("prof:")
 
 
 class _PageStub(SiteAdapter):
@@ -192,3 +209,89 @@ def test_page_mode_limit_zero_fetches_all(make_orch: Any) -> None:
         )
     )
     assert scraper.page_calls == ["p1", "p2", "p3"]
+
+
+def _seed(path: Any, items: list[ScrapedItem], crawls: list[tuple[str, int, datetime]]) -> None:
+    storage = HorusStorage(path)
+    storage.upsert_items(items)
+    for url, found, started in crawls:
+        storage.log_crawl("intercept_stub", url, found, found, started)
+    storage.close()
+
+
+def test_intercept_incremental_since_comes_from_this_profiles_last_crawl(
+    make_orch: Any, tmp_path: Any
+) -> None:
+    bob_crawl = datetime(2024, 1, 1, tzinfo=UTC)
+    # carol's post was stored while crawling someone else (a retweet / a reply
+    # thread root); it must not become carol's cutoff.
+    carol_post = ScrapedItem(
+        id="C1",
+        site_id="intercept_stub",
+        url="https://e.com/C1",
+        author_name="carol",
+        timestamp=datetime(2024, 6, 1, tzinfo=UTC),
+    )
+    _seed(
+        tmp_path / "t.db",
+        [carol_post],
+        [("prof:bob", 4, bob_crawl), ("prof:dave", 0, datetime(2024, 5, 1, tzinfo=UTC))],
+    )
+    scraper = _FakeScraper({})
+    asyncio.run(
+        make_orch(scraper).run(
+            _ProfileStub(),
+            ["prof:bob", "prof:carol", "prof:dave", "thread:x"],
+            site="intercept_stub",
+            kwargs={},
+            limit=5,
+            since=None,
+            state_path=None,
+        )
+    )
+    # dave's only crawl found nothing; a non-profile URL never gets a cutoff.
+    assert scraper.since_by_url == {
+        "prof:bob": bob_crawl,
+        "prof:carol": None,
+        "prof:dave": None,
+        "thread:x": None,
+    }
+
+
+def test_intercept_explicit_since_applies_to_every_url(make_orch: Any, tmp_path: Any) -> None:
+    _seed(tmp_path / "t.db", [], [("prof:bob", 4, datetime(2024, 1, 1, tzinfo=UTC))])
+    explicit = datetime(2020, 1, 1, tzinfo=UTC)
+    scraper = _FakeScraper({})
+    asyncio.run(
+        make_orch(scraper).run(
+            _ProfileStub(),
+            ["prof:bob", "thread:x"],
+            site="intercept_stub",
+            kwargs={},
+            limit=5,
+            since=explicit,
+            state_path=None,
+        )
+    )
+    assert scraper.since_by_url == {"prof:bob": explicit, "thread:x": explicit}
+
+
+def test_intercept_logs_each_urls_own_counts(make_orch: Any, tmp_path: Any) -> None:
+    # u2 found nothing; with run-cumulative counts it would inherit u1's items and
+    # wrongly count as a successful crawl of u2.
+    scraper = _FakeScraper({"prof:u1": _items("a", 3)})
+    asyncio.run(
+        make_orch(scraper).run(
+            _ProfileStub(),
+            ["prof:u1", "prof:u2"],
+            site="intercept_stub",
+            kwargs={},
+            limit=5,
+            since=None,
+            state_path=None,
+        )
+    )
+    storage = HorusStorage(tmp_path / "t.db")
+    assert storage.get_last_crawl_start("intercept_stub", "prof:u1") is not None
+    assert storage.get_last_crawl_start("intercept_stub", "prof:u2") is None
+    storage.close()

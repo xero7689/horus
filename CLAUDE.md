@@ -127,7 +127,11 @@ horus mcp                                        # stdio MCP server，給 agent 
 - **State 儲存**：`~/.horus/states/<site_id>.json`，per-site Playwright storage_state
 - **FTS5 trigram**：支援中文搜尋，短查詢（<3字）自動 fallback LIKE
 - **WAL mode**：SQLite write-ahead logging
-- **增量爬取**：`crawl` 指令預設從上次最新 timestamp 開始（`get_latest_timestamp`）
+- **增量爬取**：沒給 `--since` 時，profile 網址只抓「上次爬這個網址（且有抓到資料）的開始時間」之後的貼文
+  （`SiteAdapter.is_profile_url(url)` → `crawl_log` 的 `get_last_crawl_start(site, url)`）。以網址為準、不看作者：
+  轉推與回覆串原文會記在別人名下，看作者會擋掉那些帳號的第一次爬取。posts／replies 分頁各自計算；
+  從沒爬過的網址不設起點。`crawl_log` 每個網址記自己的筆數。單貼、討論串等非 profile 網址不自動設起點。有給 `--since` 時捲動抓取的網址都用它
+  （threads / instagram 的單貼網址走 SSR-JSON，不套用 since）
 - **has_page_mode**：`SiteAdapter.has_page_mode = True` 時 CLI 走 `scrape_page()` 路徑（HTML → Markdown），存入 `pages` 表；`False` 走 response 攔截路徑存入 `items` 表
 - **markdownify**：HTML → Markdown 轉換，保留結構、去除 script/style/nav/footer
 

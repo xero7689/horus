@@ -131,6 +131,23 @@ class TestGetLatestTimestamp:
         assert ts.month == 1
 
 
+class TestLastProfileCrawl:
+    def test_latest_crawl_that_found_items(self, storage: HorusStorage) -> None:
+        url = "https://www.threads.net/@alice"
+        storage.log_crawl("threads", url, 3, 3, datetime(2024, 1, 1, tzinfo=UTC))
+        storage.log_crawl("threads", url, 2, 0, datetime(2024, 2, 1, tzinfo=UTC))
+        # A run that found nothing (blocked, logged out) must not move the cutoff.
+        storage.log_crawl("threads", url, 0, 0, datetime(2024, 3, 1, tzinfo=UTC))
+        assert storage.get_last_crawl_start("threads", url) == datetime(2024, 2, 1, tzinfo=UTC)
+
+    def test_none_for_other_url_or_site(self, storage: HorusStorage) -> None:
+        storage.log_crawl(
+            "threads", "https://www.threads.net/@alice", 1, 1, datetime(2024, 1, 1, tzinfo=UTC)
+        )
+        assert storage.get_last_crawl_start("threads", "https://www.threads.net/@bob") is None
+        assert storage.get_last_crawl_start("twitter", "https://www.threads.net/@alice") is None
+
+
 class TestSearch:
     def test_fts_basic(self, storage: HorusStorage) -> None:
         storage.upsert_items(

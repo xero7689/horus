@@ -245,6 +245,21 @@ class HorusStorage:
         )
         self._conn.commit()
 
+    def get_last_crawl_start(self, site_id: str, url: str) -> datetime | None:
+        """Start time of the latest crawl of `url` that found at least one item.
+
+        Runs that found nothing (blocked, logged out) are ignored so they cannot
+        move an incremental cutoff past posts that were never fetched.
+        """
+        row = self._conn.execute(
+            "SELECT MAX(started_at) AS ts FROM crawl_log"
+            " WHERE site_id = ? AND url = ? AND items_found > 0",
+            (site_id, url),
+        ).fetchone()
+        if row and row["ts"]:
+            return datetime.fromisoformat(row["ts"])
+        return None
+
     def get_stats(self, site_id: str | None = None) -> dict[str, Any]:
         """Return stats: total items, per-site counts, latest timestamps."""
         if site_id:
