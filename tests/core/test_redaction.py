@@ -1,4 +1,4 @@
-"""Tests for kwargs secret redaction (US-006).
+"""Tests for kwargs secret redaction.
 
 Covers the helper itself plus the two exposure points it guards: the http-mode
 `crawl_log` row and the background job's outward serialization (serve job API).
@@ -56,6 +56,13 @@ def test_does_not_mutate_the_input() -> None:
 
 def test_empty_kwargs() -> None:
     assert mask_secrets({}) == {}
+
+
+def test_masks_nested_mappings() -> None:
+    # serve's POST /crawl accepts arbitrary JSON values, not just flat strings.
+    kwargs = {"query": "x", "auth": {"token": "t", "user": "u"}}
+    assert mask_secrets(kwargs) == {"query": "x", "auth": {"token": MASK, "user": "u"}}
+    assert kwargs["auth"]["token"] == "t"
 
 
 class _HttpStub(SiteAdapter):

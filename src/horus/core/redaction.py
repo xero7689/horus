@@ -29,8 +29,16 @@ def _is_secret(key: str) -> bool:
 def mask_secrets(kwargs: Mapping[str, Any]) -> dict[str, Any]:
     """Return a copy of `kwargs` with secret-looking values replaced by `MASK`.
 
-    Key matching is case-insensitive and treats `-` and `_` alike. Values are not
-    inspected — only key names — and nesting is not traversed, since crawl kwargs
-    are a flat `str -> str` mapping.
+    Key matching is case-insensitive and treats `-` and `_` alike. Only key names
+    are checked, never values. Nested mappings are masked too: CLI kwargs are flat
+    strings, but serve's `POST /crawl` accepts any JSON value.
     """
-    return {key: (MASK if _is_secret(key) else value) for key, value in kwargs.items()}
+    return {key: _mask_value(key, value) for key, value in kwargs.items()}
+
+
+def _mask_value(key: str, value: Any) -> Any:
+    if _is_secret(key):
+        return MASK
+    if isinstance(value, Mapping):
+        return mask_secrets(value)
+    return value
