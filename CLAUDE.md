@@ -123,6 +123,9 @@ horus mcp                                        # stdio MCP server，給 agent 
   沒有任何輸出寫到 stdout，stdout 只放協定訊息（只有 login 會 print 到 stdout，MCP 不開放 login）。
   背景工作跟著 server 程序，agent 關掉就中斷
 - **ScrapedItem.extra**：site-specific 欄位存 JSON dict，避免多表 migration
+- **機密遮蔽**：Click 會收下任何未知的 `--key value`，使用者手打的金鑰會混進 kwargs。凡是把 kwargs
+  寫進紀錄或對外輸出（`crawl_log`、serve job API）都要先過 `core/redaction.py` 的 `mask_secrets()`；
+  傳給 adapter 的 kwargs 保持原值。目前的輸出點：`orchestrator._run_http` 的 `log_crawl`、`CrawlJob.to_dict()`
 - **response_filter 簽名**：`(url: str, body: dict) -> bool`，雙重過濾（URL pattern + body 結構）
 - **State 儲存**：`~/.horus/states/<site_id>.json`，per-site Playwright storage_state
 - **FTS5 trigram**：支援中文搜尋，短查詢（<3字）自動 fallback LIKE

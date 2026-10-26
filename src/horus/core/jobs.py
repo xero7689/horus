@@ -20,6 +20,7 @@ from rich.text import Text
 from horus.config import Settings
 from horus.core.crawl_plan import CrawlPlan
 from horus.core.orchestrator import CrawlOrchestrator, CrawlOutcome
+from horus.core.redaction import mask_secrets
 from horus.core.scraper import BaseScraper
 from horus.core.storage import HorusStorage
 from horus.models import ScrapedItem, ScrapedPage
@@ -81,7 +82,7 @@ class CrawlJob:
         return {
             "job_id": self.job_id,
             "site": self.site,
-            "kwargs": self.kwargs,
+            "kwargs": mask_secrets(self.kwargs),  # outward-facing: never expose raw kwargs
             "status": self.status,
             "started_at": self.started_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
