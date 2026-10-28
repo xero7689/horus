@@ -60,9 +60,48 @@ def test_empty_kwargs() -> None:
 
 def test_masks_nested_mappings() -> None:
     # serve's POST /crawl accepts arbitrary JSON values, not just flat strings.
-    kwargs = {"query": "x", "auth": {"token": "t", "user": "u"}}
-    assert mask_secrets(kwargs) == {"query": "x", "auth": {"token": MASK, "user": "u"}}
-    assert kwargs["auth"]["token"] == "t"
+    kwargs = {"query": "x", "options": {"token": "t", "user": "u"}}
+    assert mask_secrets(kwargs) == {"query": "x", "options": {"token": MASK, "user": "u"}}
+    assert kwargs["options"]["token"] == "t"
+
+
+def test_masks_mappings_inside_lists() -> None:
+    kwargs = {"headers": [{"cookie": "c"}, {"accept": "json"}], "tags": ["a", "b"]}
+    assert mask_secrets(kwargs) == {
+        "headers": [{"cookie": MASK}, {"accept": "json"}],
+        "tags": ["a", "b"],
+    }
+    assert kwargs["headers"][0]["cookie"] == "c"
+
+
+def test_masks_common_credential_names() -> None:
+    masked = mask_secrets(
+        {
+            "key": "a",
+            "private_key": "b",
+            "auth": "c",
+            "basic_auth": "d",
+            "authorization": "e",
+            "credentials": "f",
+            "cookies": "g",
+            "bearer": "h",
+        }
+    )
+    assert set(masked.values()) == {MASK}
+
+
+def test_camel_case_keys_are_split_into_segments() -> None:
+    # serve's JSON body may use camelCase names.
+    masked = mask_secrets(
+        {"accessKey": "a", "authKey": "b", "basicAuth": "c", "HMACKey": "d", "SSHKey": "e"}
+    )
+    assert set(masked.values()) == {MASK}
+
+
+def test_short_hints_match_whole_segments_only() -> None:
+    # `key` and `auth` are too short for substring matching.
+    kwargs = {"author": "nasa", "keyword": "x", "monkey": "y"}
+    assert mask_secrets(kwargs) == kwargs
 
 
 class _HttpStub(SiteAdapter):
