@@ -44,6 +44,7 @@ def _parse_extra_args(extra_args: tuple[str, ...]) -> dict[str, str]:
     """Parse `--key value`, `--key=value` and bare `--flag` tokens into kwargs.
 
     A bare flag (followed by another `--` token or nothing) becomes `"true"`.
+    Extra leading dashes are dropped, so `---mode=x` reads as `--mode=x`.
     """
     result: dict[str, str] = {}
     i = 0
@@ -52,7 +53,7 @@ def _parse_extra_args(extra_args: tuple[str, ...]) -> dict[str, str]:
         i += 1
         if not token.startswith("--"):
             continue
-        name, sep, value = token[2:].partition("=")
+        name, sep, value = token.lstrip("-").partition("=")
         key = name.replace("-", "_")
         if sep:
             result[key] = value

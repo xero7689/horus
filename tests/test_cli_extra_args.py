@@ -30,6 +30,11 @@ def test_equals_splits_only_on_the_first_sign() -> None:
     assert _parse_extra_args(("--url=https://e.com/?a=1",)) == {"url": "https://e.com/?a=1"}
 
 
+def test_extra_leading_dashes_are_stripped() -> None:
+    # An extra dash must not leak into the key (`_mode`); serve strips the same way.
+    assert _parse_extra_args(("---mode=replies",)) == {"mode": "replies"}
+
+
 def test_bare_flag_does_not_swallow_the_next_flag() -> None:
     assert _parse_extra_args(("--with-comments", "--user", "@nasa")) == {
         "with_comments": "true",

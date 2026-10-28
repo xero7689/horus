@@ -92,7 +92,9 @@ def test_masks_common_credential_names() -> None:
 
 def test_camel_case_keys_are_split_into_segments() -> None:
     # serve's JSON body may use camelCase names.
-    masked = mask_secrets({"accessKey": "a", "authKey": "b", "basicAuth": "c"})
+    masked = mask_secrets(
+        {"accessKey": "a", "authKey": "b", "basicAuth": "c", "HMACKey": "d", "SSHKey": "e"}
+    )
     assert set(masked.values()) == {MASK}
 
 

@@ -32,9 +32,9 @@ _SECRET_HINTS = (
 )
 # Too short for substring matching (`author`, `keyword`), so one of the key's
 # `_`-separated segments must equal the hint exactly, as in `private_key` or
-# `basic_auth`. camelCase is split first, so `accessKey` counts too.
+# `basic_auth`. camelCase is split first, so `accessKey` and `HMACKey` count too.
 _SECRET_SEGMENTS = frozenset({"key", "auth"})
-_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
 
 def _is_secret(key: str) -> bool:
