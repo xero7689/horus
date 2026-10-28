@@ -41,20 +41,27 @@ def _parse_since(since_str: str | None) -> datetime | None:
 
 
 def _parse_extra_args(extra_args: tuple[str, ...]) -> dict[str, str]:
-    """Parse --key value pairs from extra_args tuple."""
+    """Parse `--key value`, `--key=value` and bare `--flag` tokens into kwargs.
+
+    A bare flag (followed by another `--` token or nothing) becomes `"true"`.
+    Extra leading dashes are dropped, so `---mode=x` reads as `--mode=x`.
+    """
     result: dict[str, str] = {}
-    it = iter(extra_args)
-    for token in it:
-        if token.startswith("--"):
-            key = token.lstrip("-").replace("-", "_")
-            try:
-                value = next(it)
-                if not value.startswith("--"):
-                    result[key] = value
-                else:
-                    result[key] = "true"
-            except StopIteration:
-                result[key] = "true"
+    i = 0
+    while i < len(extra_args):
+        token = extra_args[i]
+        i += 1
+        if not token.startswith("--"):
+            continue
+        name, sep, value = token.lstrip("-").partition("=")
+        key = name.replace("-", "_")
+        if sep:
+            result[key] = value
+        elif i < len(extra_args) and not extra_args[i].startswith("--"):
+            result[key] = extra_args[i]
+            i += 1
+        else:
+            result[key] = "true"
     return result
 
 
